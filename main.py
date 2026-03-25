@@ -22,16 +22,14 @@ from .utils.image_http import (
 class MyPlugin(Star):
     def __init__(self, context: Context, config: dict):
         super().__init__(context)
+        self.config = config
         self.openai_api_base = ""
         self.openai_api_key = ""
         self.selected_model_id = ""
         self._reload_runtime_config(config)
 
     def _get_current_plugin_config(self) -> dict:
-        try:
-            latest = self.context.get_config() or {}
-        except Exception:
-            latest = {}
+        latest = self.config or {}
         return latest if isinstance(latest, dict) else {}
 
     def _reload_runtime_config(self, config: dict | None = None) -> None:

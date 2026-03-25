@@ -14,7 +14,7 @@ from .utils.image_http import (
     fetch_models_sync,
     request_generation,
 )
-from .utils.schema_store import persist_selected_model_options
+from .utils.schema_store import clear_selected_model_options, persist_selected_model_options
 
 
 @register(
@@ -32,16 +32,22 @@ class MyPlugin(Star):
         self._sync_selected_model_options()
 
     def _sync_selected_model_options(self) -> None:
+        schema_path = Path(__file__).with_name("_conf_schema.json")
         if not self.openai_api_base or not self.openai_api_key:
+            clear_selected_model_options(schema_path, "请先填写服务地址和 API Key")
             return
 
-        schema_path = Path(__file__).with_name("_conf_schema.json")
         try:
             models = fetch_models_sync(self.openai_api_base, self.openai_api_key)
+            if not models:
+                clear_selected_model_options(schema_path, "当前没有可用模型")
+                logger.info("模型列表为空，已清空模型下拉选项")
+                return
             persist_selected_model_options(schema_path, models)
             logger.info("已动态更新模型下拉选项，共 %s 个模型", len(models))
         except Exception as exc:
-            logger.warning("动态拉取模型列表失败，保留当前下拉配置: %s", exc)
+            clear_selected_model_options(schema_path, "拉取模型列表失败，请检查服务地址和 API Key")
+            logger.warning("动态拉取模型列表失败，已清空下拉配置: %s", exc)
 
     def _get_message_text(self, event: AstrMessageEvent) -> str:
         message_obj = getattr(event, "message_obj", None)

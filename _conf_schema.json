@@ -1,0 +1,23 @@
+{
+    "openai_api_base": {
+        "description": "蠢酒馆生图服务地址",
+        "type": "string",
+        "hint": "支持填写 https://your-host 或 https://your-host/v1",
+        "default": "",
+        "obvious_hint": true
+    },
+    "openai_api_key": {
+        "description": "生图 API Key",
+        "type": "string",
+        "hint": "填写你自己的 API Key",
+        "default": "",
+        "obvious_hint": true
+    },
+    "selected_model_id": {
+        "description": "固定模型 ID",
+        "type": "string",
+        "hint": "填写 preset-* 形式的模型 ID，插件运行时会请求 /v1/models 做校验",
+        "default": "",
+        "obvious_hint": true
+    }
+}

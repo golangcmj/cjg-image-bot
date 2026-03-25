@@ -8,19 +8,25 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from utils.image_core import (  # type: ignore
+    build_model_option_strings,
     build_generation_endpoint,
     build_generation_payload,
     build_models_endpoint,
     build_timeout_kwargs,
     extract_command_prompt,
     extract_image_result,
+    format_model_listing,
+    normalize_selected_model_value,
     parse_model_choices,
+    resolve_selected_model_id,
+    update_selected_model_schema,
 )
 from utils.image_http import (  # type: ignore
     fetch_image_bytes_from_result_sync,
     fetch_models_sync,
     request_generation_sync,
 )
+from utils.schema_store import persist_selected_model_options  # type: ignore
 from utils.image_store import save_image_bytes  # type: ignore
 
 
@@ -97,6 +103,92 @@ def test_parse_model_choices_uses_name_for_display():
         {"id": "preset-314", "name": "动漫预设1 | 鑫酒馆"},
         {"id": "preset-128", "name": "写实人像"},
     ]
+
+
+def test_format_model_listing_renders_id_and_name():
+    content = format_model_listing(
+        [
+            {"id": "preset-314", "name": "动漫预设1 | 鑫酒馆"},
+            {"id": "preset-128", "name": "写实人像"},
+        ]
+    )
+
+    assert content == (
+        "可用模型列表：\n"
+        "preset-314 | 动漫预设1 | 鑫酒馆\n"
+        "preset-128 | 写实人像"
+    )
+
+
+def test_format_model_listing_handles_empty_models():
+    assert format_model_listing([]) == "当前没有可用模型"
+
+
+def test_resolve_selected_model_id_accepts_exact_id():
+    assert resolve_selected_model_id("preset-314", [{"id": "preset-314", "name": "动漫预设1"}]) == "preset-314"
+
+
+def test_resolve_selected_model_id_accepts_name():
+    assert resolve_selected_model_id("动漫预设1", [{"id": "preset-314", "name": "动漫预设1"}]) == "preset-314"
+
+
+def test_resolve_selected_model_id_returns_none_for_unknown_value():
+    assert resolve_selected_model_id("preset-999", [{"id": "preset-314", "name": "动漫预设1"}]) is None
+
+
+def test_build_model_option_strings_include_id_and_name():
+    assert build_model_option_strings(
+        [{"id": "preset-314", "name": "动漫预设1 | 鑫酒馆"}]
+    ) == ["preset-314"]
+
+
+def test_normalize_selected_model_value_extracts_id_from_option():
+    assert normalize_selected_model_value("preset-314 | 动漫预设1 | 鑫酒馆") == "preset-314"
+    assert normalize_selected_model_value("preset-314") == "preset-314"
+
+
+def test_update_selected_model_schema_injects_dropdown_options():
+    schema = {
+        "selected_model_id": {
+            "description": "固定模型 ID",
+            "type": "string",
+            "default": "",
+        }
+    }
+
+    updated = update_selected_model_schema(
+        schema,
+        [{"id": "preset-314", "name": "动漫预设1 | 鑫酒馆"}],
+    )
+
+    assert updated["selected_model_id"]["options"] == ["preset-314"]
+    assert updated["selected_model_id"]["hint"] == "可选模型：\npreset-314 | 动漫预设1 | 鑫酒馆"
+
+
+def test_persist_selected_model_options_writes_schema_file(tmp_path):
+    schema_path = tmp_path / "_conf_schema.json"
+    schema_path.write_text(
+        json.dumps(
+            {
+                "selected_model_id": {
+                    "description": "固定模型 ID",
+                    "type": "string",
+                    "default": "",
+                }
+            },
+            ensure_ascii=False,
+            indent=4,
+        ),
+        encoding="utf-8",
+    )
+
+    persist_selected_model_options(
+        schema_path,
+        [{"id": "preset-314", "name": "动漫预设1 | 鑫酒馆"}],
+    )
+
+    updated = json.loads(schema_path.read_text(encoding="utf-8"))
+    assert updated["selected_model_id"]["options"] == ["preset-314"]
 
 
 def test_extract_image_result_prefers_b64_json():

@@ -67,6 +67,77 @@ def parse_model_choices(payload: dict | None) -> list[dict[str, str]]:
     return models
 
 
+def build_model_option_strings(models: list[dict[str, str]]) -> list[str]:
+    options: list[str] = []
+    for item in models:
+        model_id = item.get("id") or ""
+        if not model_id:
+            continue
+        options.append(model_id)
+    return options
+
+
+def normalize_selected_model_value(value: str) -> str:
+    raw = (value or "").strip()
+    if not raw:
+        return ""
+    if " | " in raw:
+        return raw.split(" | ", 1)[0].strip()
+    return raw
+
+
+def build_model_hint(models: list[dict[str, str]]) -> str:
+    if not models:
+        return "当前没有可用模型"
+
+    lines = ["可选模型："]
+    for item in models:
+        model_id = item.get("id") or ""
+        model_name = item.get("name") or model_id
+        if not model_id:
+            continue
+        lines.append(f"{model_id} | {model_name}")
+    return "\n".join(lines)
+
+
+def update_selected_model_schema(schema: dict, models: list[dict[str, str]]) -> dict:
+    updated = dict(schema)
+    field = dict(updated.get("selected_model_id") or {})
+    field["type"] = "string"
+    field["options"] = build_model_option_strings(models)
+    field["hint"] = build_model_hint(models)
+    updated["selected_model_id"] = field
+    return updated
+
+
+def format_model_listing(models: list[dict[str, str]]) -> str:
+    if not models:
+        return "当前没有可用模型"
+
+    lines = ["可用模型列表："]
+    for item in models:
+        model_id = item.get("id") or ""
+        model_name = item.get("name") or model_id
+        lines.append(f"{model_id} | {model_name}")
+    return "\n".join(lines)
+
+
+def resolve_selected_model_id(selection: str, models: list[dict[str, str]]) -> str | None:
+    value = normalize_selected_model_value(selection)
+    if not value:
+        return None
+
+    for item in models:
+        if item.get("id") == value:
+            return item["id"]
+
+    for item in models:
+        if item.get("name") == value:
+            return item["id"]
+
+    return None
+
+
 def extract_image_result(payload: dict | None) -> tuple[str | None, str | None]:
     for item in (payload or {}).get("data", []):
         if not isinstance(item, dict):

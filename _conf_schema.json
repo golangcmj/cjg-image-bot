@@ -14,9 +14,9 @@
         "obvious_hint": true
     },
     "selected_model_id": {
-        "description": "固定模型 ID",
+        "description": "固定模型",
         "type": "string",
-        "hint": "填写 preset-* 形式的模型 ID，插件运行时会请求 /v1/models 做校验",
+        "hint": "插件会根据当前服务地址和 API Key 动态拉取模型列表，并显示为下拉选项",
         "default": "",
         "obvious_hint": true
     }

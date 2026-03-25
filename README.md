@@ -45,13 +45,9 @@
 
 ### `selected_model_id`
 
-固定模型 ID，必须填写你服务端返回的 `preset-*` 值，例如：
+固定模型下拉项。
 
-```text
-preset-314
-```
-
-插件运行时会请求 `/v1/models` 检查这个模型是否还存在。
+插件会根据当前的 `openai_api_base` 和 `openai_api_key` 动态请求 `/v1/models`，并把返回结果写成下拉选项。选择后保存的值仍然是实际的 `preset-*` 模型 ID。
 
 ## 使用方式
 

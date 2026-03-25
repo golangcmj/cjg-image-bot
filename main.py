@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from astrbot.api import logger
 from astrbot.api.all import Image
 from astrbot.api.event import filter, AstrMessageEvent
@@ -5,12 +7,14 @@ from astrbot.api.star import Context, Star, register
 from astrbot.core.message.components import Reply
 
 from .utils.image_store import save_image_bytes
-from .utils.image_core import extract_command_prompt
+from .utils.image_core import extract_command_prompt, normalize_selected_model_value
 from .utils.image_http import (
     fetch_image_bytes_from_result,
     fetch_models,
+    fetch_models_sync,
     request_generation,
 )
+from .utils.schema_store import persist_selected_model_options
 
 
 @register(
@@ -24,7 +28,20 @@ class MyPlugin(Star):
         super().__init__(context)
         self.openai_api_base = str(config.get("openai_api_base", "") or "").strip()
         self.openai_api_key = str(config.get("openai_api_key", "") or "").strip()
-        self.selected_model_id = str(config.get("selected_model_id", "") or "").strip()
+        self.selected_model_id = normalize_selected_model_value(str(config.get("selected_model_id", "") or ""))
+        self._sync_selected_model_options()
+
+    def _sync_selected_model_options(self) -> None:
+        if not self.openai_api_base or not self.openai_api_key:
+            return
+
+        schema_path = Path(__file__).with_name("_conf_schema.json")
+        try:
+            models = fetch_models_sync(self.openai_api_base, self.openai_api_key)
+            persist_selected_model_options(schema_path, models)
+            logger.info("已动态更新模型下拉选项，共 %s 个模型", len(models))
+        except Exception as exc:
+            logger.warning("动态拉取模型列表失败，保留当前下拉配置: %s", exc)
 
     def _get_message_text(self, event: AstrMessageEvent) -> str:
         message_obj = getattr(event, "message_obj", None)

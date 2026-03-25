@@ -9,7 +9,6 @@ from .image_core import (
     build_generation_endpoint,
     build_generation_payload,
     build_models_endpoint,
-    build_timeout_kwargs,
     extract_image_result,
     parse_model_choices,
 )
@@ -29,14 +28,17 @@ def _read_json_response(response) -> dict:
     return json.loads(raw.decode("utf-8"))
 
 
+def _open_request(request, urlopen_func=urlopen):
+    return urlopen_func(request)
+
+
 def fetch_models_sync(base_url: str, api_key: str, urlopen_func=urlopen) -> list[dict[str, str]]:
     request = Request(
         build_models_endpoint(base_url),
         headers=_build_headers(api_key),
         method="GET",
     )
-    timeout = build_timeout_kwargs()["connect"]
-    with urlopen_func(request, timeout=timeout) as response:
+    with _open_request(request, urlopen_func=urlopen_func) as response:
         payload = _read_json_response(response)
     return parse_model_choices(payload)
 
@@ -54,8 +56,7 @@ def request_generation_sync(
         headers=_build_headers(api_key),
         method="POST",
     )
-    timeout = build_timeout_kwargs()["connect"]
-    with urlopen_func(request, timeout=timeout) as response:
+    with _open_request(request, urlopen_func=urlopen_func) as response:
         payload = _read_json_response(response)
     return extract_image_result(payload)
 
@@ -70,8 +71,7 @@ def fetch_image_bytes_from_result_sync(
 
     if result_kind == "url" and result_value:
         request = Request(result_value, method="GET")
-        timeout = build_timeout_kwargs()["connect"]
-        with urlopen_func(request, timeout=timeout) as response:
+        with _open_request(request, urlopen_func=urlopen_func) as response:
             return response.read()
 
     raise ValueError("未找到可用的图片结果")

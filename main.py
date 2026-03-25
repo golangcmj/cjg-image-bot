@@ -26,10 +26,33 @@ from .utils.schema_store import clear_selected_model_options, persist_selected_m
 class MyPlugin(Star):
     def __init__(self, context: Context, config: dict):
         super().__init__(context)
-        self.openai_api_base = str(config.get("openai_api_base", "") or "").strip()
-        self.openai_api_key = str(config.get("openai_api_key", "") or "").strip()
-        self.selected_model_id = normalize_selected_model_value(str(config.get("selected_model_id", "") or ""))
-        self._sync_selected_model_options()
+        self.openai_api_base = ""
+        self.openai_api_key = ""
+        self.selected_model_id = ""
+        self._model_source_signature = ""
+        self._reload_runtime_config(config, force_sync=True)
+
+    def _get_current_plugin_config(self) -> dict:
+        try:
+            latest = self.context.get_config() or {}
+        except Exception:
+            latest = {}
+        return latest if isinstance(latest, dict) else {}
+
+    def _reload_runtime_config(self, config: dict | None = None, force_sync: bool = False) -> None:
+        source = config if isinstance(config, dict) else self._get_current_plugin_config()
+        new_base = str(source.get("openai_api_base", "") or "").strip()
+        new_key = str(source.get("openai_api_key", "") or "").strip()
+        new_model = normalize_selected_model_value(str(source.get("selected_model_id", "") or ""))
+        new_signature = f"{new_base}\n{new_key}"
+
+        self.openai_api_base = new_base
+        self.openai_api_key = new_key
+        self.selected_model_id = new_model
+
+        if force_sync or new_signature != self._model_source_signature:
+            self._model_source_signature = new_signature
+            self._sync_selected_model_options()
 
     def _sync_selected_model_options(self) -> None:
         schema_path = Path(__file__).with_name("_conf_schema.json")
@@ -91,6 +114,8 @@ class MyPlugin(Star):
 
     @filter.command("生图")
     async def generate_image(self, event: AstrMessageEvent, prompt: str = ""):
+        self._reload_runtime_config()
+
         if not self.openai_api_base or not self.openai_api_key:
             yield event.plain_result("当前未配置生图服务")
             return

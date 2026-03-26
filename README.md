@@ -1,11 +1,35 @@
 # cjg-image-bot
 
-AstrBot 图片插件，当前支持两个命令：
+AstrBot 图片插件，当前支持五个命令：
 
 - `/生图`：严格文本生图（text-to-image）
 - `/改图`：基于消息可解析图片做编辑，仍走 `/v1/images/generations`
+- `/当前模型`：查看当前会话实际生效模型（按群隔离）
+- `/模型列表`：查看配置里的模型目录
+- `/切换模型 <模型名称或模型ID>`：仅切换当前群/会话的模型
 
 ## 命令说明
+
+### `/当前模型`
+
+- 输出固定包含“模型名称 + 模型ID”
+- 模型选择回落链：
+1. 当前群/会话已切换模型
+2. 配置 `default_model`
+3. 兼容旧配置 `selected_model_id`
+
+### `/模型列表`
+
+- 读取配置 `model_directory`
+- `model_directory` 单独一行也有效（等同单模型目录）
+- 非法行会忽略，但合法行会保留
+- 每行按 `模型名称 | 模型ID` 展示
+- 若 `model_directory` 为空，返回“模型目录为空，请先配置 model_directory”
+
+### `/切换模型 <模型名称或模型ID>`
+
+- 仅在当前群/会话生效，不影响其它群
+- 可输入显示名称或模型 ID
 
 ### `/生图`
 
@@ -19,6 +43,7 @@ AstrBot 图片插件，当前支持两个命令：
 
 - 只提交纯文本描述
 - 输入中的控制片段（如 `data:image/...`、`[[强度=0.3]]` / `[[strength=0.3]]`）会在提交前剥离
+- 使用当前会话生效模型（当前群 -> 默认模型 -> 旧 selected_model_id）
 
 ### `/改图`
 
@@ -40,11 +65,14 @@ AstrBot 图片插件，当前支持两个命令：
 - 三个来源都不可用时返回 `未检测到图片`
 - 强度别名支持中文优先写法 `[[强度=0.3]]`，会归一化为 `[[strength=0.3]]`
 - 最终仍复用同一 generation 请求与回图流程，不暴露后端上传细节
+- 使用当前会话生效模型（当前群 -> 默认模型 -> 旧 selected_model_id）
 
 ## 配置项
 
 - `openai_api_base`
 - `openai_api_key`
-- `selected_model_id`
+- `model_directory`（多行，格式 `模型名称|模型ID`；单行同样有效；非法行忽略但保留合法行）
+- `default_model`（可填模型名称或模型ID）
+- `selected_model_id`（旧配置兜底）
 - `default_i2i_strength`（默认 0.35）
 - `strength_keyword`（默认 `强度`）

@@ -29,6 +29,7 @@ from utils.image_http import (  # type: ignore
     fetch_models_sync,
     request_generation_sync,
 )
+from utils.group_model_state import GroupModelStateStore  # type: ignore
 from utils.schema_store import persist_selected_model_options  # type: ignore
 from utils.image_store import save_image_bytes  # type: ignore
 
@@ -396,12 +397,25 @@ def _load_main_module():
 
 
 class _DummyEvent:
-    def __init__(self, message_str: str, *, current_images=None, reply_images=None, mention_avatars=None):
+    def __init__(
+        self,
+        message_str: str,
+        *,
+        current_images=None,
+        reply_images=None,
+        mention_avatars=None,
+        group_id: str | None = None,
+        session_id: str | None = None,
+        user_id: str | None = None,
+    ):
         self.message_str = message_str
         self.message_obj = None
         self.current_images = current_images or []
         self.reply_images = reply_images or []
         self.mention_avatars = mention_avatars or []
+        self.group_id = group_id
+        self.session_id = session_id
+        self.user_id = user_id
 
     def plain_result(self, text):
         return ("plain", text)
@@ -421,7 +435,7 @@ def test_generate_image_sanitizes_control_fragments_before_submission(monkeypatc
         },
     )
 
-    async def _available():
+    async def _available(_model_id):
         return True
 
     captured_prompt = {"value": None}
@@ -498,7 +512,7 @@ def test_edit_image_builds_prompt_with_resolved_image_and_strength(monkeypatch):
         },
     )
 
-    async def _available():
+    async def _available(_model_id):
         return True
 
     captured_prompt = {"value": None}
@@ -528,6 +542,229 @@ def test_edit_image_builds_prompt_with_resolved_image_and_strength(monkeypatch):
     assert "data:image/png;base64,QUJD" in prompt_value
     assert "[[strength=0.3]]" in prompt_value
     assert any(item[0] == "chain" for item in outputs)
+
+
+def test_model_commands_include_name_and_id_and_switch_supports_name_or_id():
+    module = _load_main_module()
+    plugin = module.MyPlugin(
+        context=object(),
+        config={
+            "openai_api_base": "https://image.example",
+            "openai_api_key": "sk-test",
+            "model_directory": "动漫模型|preset-314\n写实模型|preset-128",
+            "default_model": "动漫模型",
+        },
+    )
+    plugin._group_model_state = GroupModelStateStore(None)
+
+    current_before = asyncio.run(_collect_results(plugin.current_model(_DummyEvent("/当前模型", group_id="g1"))))
+    current_before_text = current_before[0][1]
+    assert "动漫模型" in current_before_text
+    assert "preset-314" in current_before_text
+
+    listing = asyncio.run(_collect_results(plugin.model_list(_DummyEvent("/模型列表", group_id="g1"))))
+    listing_text = listing[0][1]
+    assert "动漫模型" in listing_text and "preset-314" in listing_text
+    assert "写实模型" in listing_text and "preset-128" in listing_text
+
+    switched_by_name = asyncio.run(
+        _collect_results(plugin.switch_model(_DummyEvent("/切换模型 写实模型", group_id="g1")))
+    )
+    switched_by_name_text = switched_by_name[0][1]
+    assert "写实模型" in switched_by_name_text
+    assert "preset-128" in switched_by_name_text
+
+    current_after_name = asyncio.run(_collect_results(plugin.current_model(_DummyEvent("/当前模型", group_id="g1"))))
+    current_after_name_text = current_after_name[0][1]
+    assert "写实模型" in current_after_name_text
+    assert "preset-128" in current_after_name_text
+
+    switched_by_id = asyncio.run(
+        _collect_results(plugin.switch_model(_DummyEvent("/切换模型 preset-314", group_id="g1")))
+    )
+    switched_by_id_text = switched_by_id[0][1]
+    assert "动漫模型" in switched_by_id_text
+    assert "preset-314" in switched_by_id_text
+
+
+def test_generate_image_uses_group_specific_selected_model(monkeypatch):
+    module = _load_main_module()
+    plugin = module.MyPlugin(
+        context=object(),
+        config={
+            "openai_api_base": "https://image.example",
+            "openai_api_key": "sk-test",
+            "model_directory": "动漫模型|preset-314\n写实模型|preset-128",
+            "default_model": "动漫模型",
+        },
+    )
+    plugin._group_model_state = GroupModelStateStore(None)
+
+    async def _available(_model_id):
+        return True
+
+    captured_models: list[str] = []
+
+    async def _fake_request_generation(base, key, model, prompt):
+        captured_models.append(model)
+        return "b64_json", "ZmFrZS1pbWFnZS1ieXRlcw=="
+
+    async def _fake_fetch_image_bytes(_kind, _value):
+        return b"fake-image-bytes"
+
+    monkeypatch.setattr(plugin, "_selected_model_is_available", _available)
+    monkeypatch.setattr(module, "request_generation", _fake_request_generation)
+    monkeypatch.setattr(module, "fetch_image_bytes_from_result", _fake_fetch_image_bytes)
+    monkeypatch.setattr(module, "save_image_bytes", lambda *_args, **_kwargs: "fake.png")
+
+    asyncio.run(_collect_results(plugin.switch_model(_DummyEvent("/切换模型 写实模型", group_id="g1"))))
+    asyncio.run(_collect_results(plugin.generate_image(_DummyEvent("/生图 第一群", group_id="g1"))))
+    asyncio.run(_collect_results(plugin.generate_image(_DummyEvent("/生图 第二群", group_id="g2"))))
+
+    assert captured_models == ["preset-128", "preset-314"]
+
+
+def test_generate_image_falls_back_to_default_when_group_selection_is_no_longer_in_directory(monkeypatch):
+    module = _load_main_module()
+    plugin = module.MyPlugin(
+        context=object(),
+        config={
+            "openai_api_base": "https://image.example",
+            "openai_api_key": "sk-test",
+            "model_directory": "动漫模型|preset-314\n写实模型|preset-128",
+            "default_model": "动漫模型",
+        },
+    )
+    plugin._group_model_state = GroupModelStateStore(None)
+    plugin._group_model_state.set_model_id("group:g1", "removed-model")
+
+    async def _available(_model_id):
+        return True
+
+    captured_models: list[str] = []
+
+    async def _fake_request_generation(base, key, model, prompt):
+        captured_models.append(model)
+        return "b64_json", "ZmFrZS1pbWFnZS1ieXRlcw=="
+
+    async def _fake_fetch_image_bytes(_kind, _value):
+        return b"fake-image-bytes"
+
+    monkeypatch.setattr(plugin, "_selected_model_is_available", _available)
+    monkeypatch.setattr(module, "request_generation", _fake_request_generation)
+    monkeypatch.setattr(module, "fetch_image_bytes_from_result", _fake_fetch_image_bytes)
+    monkeypatch.setattr(module, "save_image_bytes", lambda *_args, **_kwargs: "fake.png")
+
+    asyncio.run(_collect_results(plugin.generate_image(_DummyEvent("/生图 群模型兜底测试", group_id="g1"))))
+
+    assert captured_models == ["preset-314"]
+
+
+def test_generate_image_falls_back_to_legacy_selected_model_id_when_needed(monkeypatch):
+    module = _load_main_module()
+    plugin = module.MyPlugin(
+        context=object(),
+        config={
+            "openai_api_base": "https://image.example",
+            "openai_api_key": "sk-test",
+            "selected_model_id": "legacy-001",
+        },
+    )
+    plugin._group_model_state = GroupModelStateStore(None)
+
+    async def _available(_model_id):
+        return True
+
+    captured_models: list[str] = []
+
+    async def _fake_request_generation(base, key, model, prompt):
+        captured_models.append(model)
+        return "b64_json", "ZmFrZS1pbWFnZS1ieXRlcw=="
+
+    async def _fake_fetch_image_bytes(_kind, _value):
+        return b"fake-image-bytes"
+
+    monkeypatch.setattr(plugin, "_selected_model_is_available", _available)
+    monkeypatch.setattr(module, "request_generation", _fake_request_generation)
+    monkeypatch.setattr(module, "fetch_image_bytes_from_result", _fake_fetch_image_bytes)
+    monkeypatch.setattr(module, "save_image_bytes", lambda *_args, **_kwargs: "fake.png")
+
+    asyncio.run(_collect_results(plugin.generate_image(_DummyEvent("/生图 legacy 模型测试", session_id="s-1"))))
+
+    assert captured_models == ["legacy-001"]
+
+
+def test_generate_image_accepts_default_model_id_without_directory(monkeypatch):
+    module = _load_main_module()
+    plugin = module.MyPlugin(
+        context=object(),
+        config={
+            "openai_api_base": "https://image.example",
+            "openai_api_key": "sk-test",
+            "default_model": "preset-314",
+        },
+    )
+    plugin._group_model_state = GroupModelStateStore(None)
+
+    async def _available(_model_id):
+        return True
+
+    captured_models: list[str] = []
+
+    async def _fake_request_generation(base, key, model, prompt):
+        captured_models.append(model)
+        return "b64_json", "ZmFrZS1pbWFnZS1ieXRlcw=="
+
+    async def _fake_fetch_image_bytes(_kind, _value):
+        return b"fake-image-bytes"
+
+    monkeypatch.setattr(plugin, "_selected_model_is_available", _available)
+    monkeypatch.setattr(module, "request_generation", _fake_request_generation)
+    monkeypatch.setattr(module, "fetch_image_bytes_from_result", _fake_fetch_image_bytes)
+    monkeypatch.setattr(module, "save_image_bytes", lambda *_args, **_kwargs: "fake.png")
+
+    asyncio.run(_collect_results(plugin.generate_image(_DummyEvent("/鐢熷浘 default id 妯″瀷娴嬭瘯", session_id="s-default"))))
+
+    assert captured_models == ["preset-314"]
+
+
+def test_model_list_does_not_expose_legacy_selected_model_when_directory_empty():
+    module = _load_main_module()
+    plugin = module.MyPlugin(
+        context=object(),
+        config={
+            "openai_api_base": "https://image.example",
+            "openai_api_key": "sk-test",
+            "selected_model_id": "legacy-001",
+        },
+    )
+    plugin._group_model_state = GroupModelStateStore(None)
+
+    outputs = asyncio.run(_collect_results(plugin.model_list(_DummyEvent("/模型列表", session_id="s-legacy"))))
+
+    assert outputs == [("plain", "模型目录为空，请先配置 model_directory")]
+    assert "legacy-001" not in outputs[0][1]
+
+
+def test_switch_model_reports_failure_when_state_cannot_persist(tmp_path):
+    module = _load_main_module()
+    plugin = module.MyPlugin(
+        context=object(),
+        config={
+            "openai_api_base": "https://image.example",
+            "openai_api_key": "sk-test",
+            "model_directory": "鍔ㄦ极妯″瀷|preset-314",
+            "default_model": "鍔ㄦ极妯″瀷",
+        },
+    )
+    occupied_parent = tmp_path / "occupied"
+    occupied_parent.write_text("not-a-directory", encoding="utf-8")
+    plugin._group_model_state = GroupModelStateStore(occupied_parent / "group_model_state.json")
+
+    outputs = asyncio.run(_collect_results(plugin.switch_model(_DummyEvent("", group_id="g1"), prompt="鍔ㄦ极妯″瀷")))
+
+    assert outputs[0][0] == "plain"
+    assert "模型切换失败" in outputs[0][1]
 
 
 async def _collect_results(async_generator):

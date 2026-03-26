@@ -14,9 +14,23 @@
         "obvious_hint": true
     },
     "selected_model_id": {
-        "description": "固定模型",
+        "description": "兼容旧版固定模型（兜底）",
         "type": "string",
-        "hint": "填写 preset-* 格式的模型 ID，例如 preset-314",
+        "hint": "旧配置兼容项：当未命中群模型和默认模型时作为最后回退，可填模型 ID。",
+        "default": "",
+        "obvious_hint": true
+    },
+    "model_directory": {
+        "description": "模型目录（多行）",
+        "type": "string",
+        "hint": "每行格式：模型名称|模型ID。单独一行也有效；非法行会忽略，但合法行会保留。示例：动漫模型|preset-314",
+        "default": "",
+        "obvious_hint": true
+    },
+    "default_model": {
+        "description": "默认模型（名称或ID）",
+        "type": "string",
+        "hint": "可填写 model_directory 中的模型名称或模型 ID。",
         "default": "",
         "obvious_hint": true
     },

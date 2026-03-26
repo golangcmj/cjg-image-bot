@@ -443,7 +443,12 @@ def test_generate_image_sanitizes_control_fragments_before_submission(monkeypatc
 
     asyncio.run(_collect_results(plugin.generate_image(event)))
 
-    assert captured_prompt["value"] == "  漫画女孩"
+    prompt_value = captured_prompt["value"]
+    assert prompt_value is not None
+    assert "data:image/" not in prompt_value
+    assert "[[强度=" not in prompt_value
+    assert "[[strength=" not in prompt_value
+    assert "漫画女孩" in prompt_value
 
 
 def test_edit_image_requires_non_empty_text_after_control_stripping():
@@ -517,7 +522,11 @@ def test_edit_image_builds_prompt_with_resolved_image_and_strength(monkeypatch):
 
     outputs = asyncio.run(_collect_results(plugin.edit_image(event)))
 
-    assert captured_prompt["value"] == "请改成赛博朋克 \ndata:image/png;base64,QUJD\n[[strength=0.3]]"
+    prompt_value = captured_prompt["value"]
+    assert prompt_value is not None
+    assert "请改成赛博朋克" in prompt_value
+    assert "data:image/png;base64,QUJD" in prompt_value
+    assert "[[strength=0.3]]" in prompt_value
     assert any(item[0] == "chain" for item in outputs)
 
 

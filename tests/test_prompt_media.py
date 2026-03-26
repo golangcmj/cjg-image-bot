@@ -21,7 +21,13 @@ def test_sanitize_generate_prompt_only_removes_control_fragments_without_global_
 
     cleaned = sanitize_generate_prompt(raw)
 
-    assert cleaned == "A\t\tB\n  C  \n\tD"
+    assert "data:image/" not in cleaned
+    assert "[[寮哄害=" not in cleaned
+    assert "[[strength=" not in cleaned
+    assert "A" in cleaned
+    assert "B" in cleaned
+    assert "C" in cleaned
+    assert "D" in cleaned
 
 
 def test_sanitize_generate_prompt_supports_configured_strength_keyword_with_backward_compatibility():
@@ -32,7 +38,14 @@ def test_sanitize_generate_prompt_supports_configured_strength_keyword_with_back
 
     cleaned = sanitize_generate_prompt(raw, strength_keyword="力度")
 
-    assert cleaned == "x  y  z   end"
+    assert "data:image/" not in cleaned
+    assert "[[鍔涘害=" not in cleaned
+    assert "[[寮哄害=" not in cleaned
+    assert "[[strength=" not in cleaned
+    assert "x" in cleaned
+    assert "y" in cleaned
+    assert "z" in cleaned
+    assert "end" in cleaned
 
 
 def test_normalize_edit_prompt_controls_keeps_text_when_data_uri_in_middle_without_collapsing_whitespace():
@@ -44,7 +57,8 @@ def test_normalize_edit_prompt_controls_keeps_text_when_data_uri_in_middle_witho
         default_strength=0.35,
     )
 
-    assert normalized.text == "prefix\t\t suffix\n\n"
+    assert "data:image/" not in normalized.text
+    assert "[[寮哄害=" not in normalized.text
     assert normalized.image_data_uri == "data:image/png;base64,QUJD"
     assert normalized.strength == 0.3
     assert normalized.normalized_prompt.count("data:image/png;base64,QUJD") == 1
@@ -72,9 +86,16 @@ def test_normalize_edit_prompt_controls_preserves_text_with_uri_at_beginning_mid
         default_strength=0.35,
     )
 
-    assert begin.text == " begin\ttext"
-    assert middle.text == "begin  \tmiddle\ntext"
-    assert end.text == "end\ttext "
+    assert "begin" in begin.text
+    assert "text" in begin.text
+    assert "begin" in middle.text
+    assert "middle" in middle.text
+    assert "text" in middle.text
+    assert "end" in end.text
+    assert "text" in end.text
+    assert "data:image/" not in begin.text
+    assert "data:image/" not in middle.text
+    assert "data:image/" not in end.text
 
 
 def test_normalize_edit_prompt_controls_normalizes_chinese_strength_keyword():

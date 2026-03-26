@@ -43,7 +43,7 @@ class MyPlugin(Star):
     def _get_strength_keyword(self) -> str:
         source = self._get_current_plugin_config()
         keyword = str(source.get("strength_keyword", "") or "").strip()
-        return keyword or "\u5f3a\u5ea6"
+        return keyword or "强度"
 
     def _get_default_i2i_strength(self) -> float:
         source = self._get_current_plugin_config()
@@ -81,7 +81,7 @@ class MyPlugin(Star):
             try:
                 return Reply(message_id)
             except Exception:
-                logger.warning("Reply \u7ec4\u4ef6\u6784\u9020\u5931\u8d25\uff0c\u6539\u4e3a\u76f4\u63a5\u53d1\u56fe")
+                logger.warning("Reply 组件构造失败，改为直接发图")
                 return None
 
     async def _selected_model_is_available(self) -> bool:
@@ -91,39 +91,17 @@ class MyPlugin(Star):
         try:
             models = await fetch_models(self.openai_api_base, self.openai_api_key)
         except Exception as exc:
-            logger.warning("\u62c9\u53d6\u6a21\u578b\u5217\u8868\u5931\u8d25\uff0c\u7ee7\u7eed\u4f7f\u7528\u5df2\u914d\u7f6e\u6a21\u578b: %s", exc)
+            logger.warning("拉取模型列表失败，继续使用已配置模型: %s", exc)
             return True
 
         return any(model.get("id") == self.selected_model_id for model in models)
 
-    @filter.command("\u751f\u56fe")
-    async def generate_image(self, event: AstrMessageEvent, prompt: str = ""):
-        self._reload_runtime_config()
-        strength_keyword = self._get_strength_keyword()
-
-        if not self.openai_api_base or not self.openai_api_key:
-            yield event.plain_result("\u5f53\u524d\u672a\u914d\u7f6e\u751f\u56fe\u670d\u52a1")
-            return
-
-        if not self.selected_model_id:
-            yield event.plain_result("\u5f53\u524d\u672a\u914d\u7f6e\u6a21\u578b")
-            return
-
-        raw_text = self._get_message_text(event)
-        final_prompt = extract_command_prompt(raw_text, "\u751f\u56fe")
-        if not final_prompt:
-            final_prompt = prompt or ""
-        final_prompt = sanitize_generate_prompt(final_prompt, strength_keyword=strength_keyword)
-
-        if not final_prompt:
-            yield event.plain_result("\u8bf7\u8f93\u5165\u63d0\u793a\u8bcd")
-            return
-
+    async def _request_and_reply_image(self, event: AstrMessageEvent, final_prompt: str, *, action_name: str):
         if not await self._selected_model_is_available():
-            yield event.plain_result("\u5f53\u524d\u6a21\u578b\u4e0d\u53ef\u7528\uff0c\u8bf7\u5728\u540e\u53f0\u91cd\u65b0\u8bbe\u7f6e")
+            yield event.plain_result("当前模型不可用，请在后台重新设置")
             return
 
-        yield event.plain_result("\u56fe\u7247\u751f\u6210\u4e2d")
+        yield event.plain_result("图片生成中")
 
         try:
             result_kind, result_value = await request_generation(
@@ -143,36 +121,61 @@ class MyPlugin(Star):
             chain.append(image_component)
             yield event.chain_result(chain)
         except Exception as exc:
-            logger.error("\u751f\u56fe\u5931\u8d25: %s", exc)
-            yield event.plain_result(f"\u56fe\u7247\u751f\u6210\u5931\u8d25\n{exc}")
+            logger.error("%s失败: %s", action_name, exc)
+            yield event.plain_result(f"图片生成失败\n{exc}")
 
-    @filter.command("\u6539\u56fe")
+    @filter.command("生图")
+    async def generate_image(self, event: AstrMessageEvent, prompt: str = ""):
+        self._reload_runtime_config()
+        strength_keyword = self._get_strength_keyword()
+
+        if not self.openai_api_base or not self.openai_api_key:
+            yield event.plain_result("当前未配置生图服务")
+            return
+
+        if not self.selected_model_id:
+            yield event.plain_result("当前未配置模型")
+            return
+
+        raw_text = self._get_message_text(event)
+        final_prompt = extract_command_prompt(raw_text, "生图")
+        if not final_prompt:
+            final_prompt = prompt or ""
+        final_prompt = sanitize_generate_prompt(final_prompt, strength_keyword=strength_keyword)
+        if not final_prompt:
+            yield event.plain_result("请输入提示词")
+            return
+
+        async for item in self._request_and_reply_image(event, final_prompt, action_name="生图"):
+            yield item
+
+    @filter.command("改图")
     async def edit_image(self, event: AstrMessageEvent, prompt: str = ""):
         self._reload_runtime_config()
         strength_keyword = self._get_strength_keyword()
         default_strength = self._get_default_i2i_strength()
 
         if not self.openai_api_base or not self.openai_api_key:
-            yield event.plain_result("\u5f53\u524d\u672a\u914d\u7f6e\u751f\u56fe\u670d\u52a1")
+            yield event.plain_result("当前未配置生图服务")
             return
 
         if not self.selected_model_id:
-            yield event.plain_result("\u5f53\u524d\u672a\u914d\u7f6e\u6a21\u578b")
+            yield event.plain_result("当前未配置模型")
             return
 
         raw_text = self._get_message_text(event)
-        edit_text = extract_command_prompt(raw_text, "\u6539\u56fe")
+        edit_text = extract_command_prompt(raw_text, "改图")
         if not edit_text:
             edit_text = prompt or ""
 
         stripped_text = sanitize_generate_prompt(edit_text, strength_keyword=strength_keyword)
         if not stripped_text.strip():
-            yield event.plain_result("\u8bf7\u8f93\u5165\u6539\u56fe\u63cf\u8ff0")
+            yield event.plain_result("请输入改图描述")
             return
 
-        resolved_image = resolve_edit_image(event, strength_keyword=strength_keyword)
+        resolved_image = await resolve_edit_image(event)
         if resolved_image is None:
-            yield event.plain_result("\u672a\u68c0\u6d4b\u5230\u56fe\u7247")
+            yield event.plain_result("未检测到图片")
             return
 
         normalized = normalize_edit_prompt_controls(
@@ -183,29 +186,5 @@ class MyPlugin(Star):
         strength_tag = f"[[strength={normalized.strength:g}]]"
         final_prompt = "\n".join([stripped_text, resolved_image.image_data_uri, strength_tag])
 
-        if not await self._selected_model_is_available():
-            yield event.plain_result("\u5f53\u524d\u6a21\u578b\u4e0d\u53ef\u7528\uff0c\u8bf7\u5728\u540e\u53f0\u91cd\u65b0\u8bbe\u7f6e")
-            return
-
-        yield event.plain_result("\u56fe\u7247\u751f\u6210\u4e2d")
-
-        try:
-            result_kind, result_value = await request_generation(
-                self.openai_api_base,
-                self.openai_api_key,
-                self.selected_model_id,
-                final_prompt,
-            )
-            image_bytes = await fetch_image_bytes_from_result(result_kind, result_value)
-            image_path = save_image_bytes(image_bytes)
-            image_component = Image.fromFileSystem(image_path)
-
-            chain = []
-            reply_component = self._build_reply_component(event)
-            if reply_component is not None:
-                chain.append(reply_component)
-            chain.append(image_component)
-            yield event.chain_result(chain)
-        except Exception as exc:
-            logger.error("\u6539\u56fe\u5931\u8d25: %s", exc)
-            yield event.plain_result(f"\u56fe\u7247\u751f\u6210\u5931\u8d25\n{exc}")
+        async for item in self._request_and_reply_image(event, final_prompt, action_name="改图"):
+            yield item

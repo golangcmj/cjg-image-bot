@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import asyncio
 import base64
 import mimetypes
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 from urllib.request import urlopen
+
+
+MAX_IMAGE_BYTES = 10 * 1024 * 1024
 
 
 @dataclass
@@ -34,28 +38,12 @@ def _iter_component_candidates(component: Any):
         return
 
     if isinstance(component, dict):
-        for key in (
-            "data_uri",
-            "image_data_uri",
-            "image",
-            "url",
-            "src",
-            "file",
-            "path",
-        ):
+        for key in ("data_uri", "image_data_uri", "image", "url", "src", "file", "path"):
             if key in component:
                 yield component.get(key)
         return
 
-    for attr in (
-        "data_uri",
-        "image_data_uri",
-        "image",
-        "url",
-        "src",
-        "file",
-        "path",
-    ):
+    for attr in ("data_uri", "image_data_uri", "image", "url", "src", "file", "path"):
         yield getattr(component, attr, None)
 
 
@@ -146,9 +134,20 @@ def _to_data_uri(image_bytes: bytes, mime_type: str) -> str:
     return f"data:{mime_type};base64,{encoded}"
 
 
-def _read_bytes_from_url(candidate: str) -> tuple[bytes, str]:
+def _read_with_size_limit(reader, max_bytes: int) -> bytes:
+    content = reader(max_bytes + 1)
+    if len(content) > max_bytes:
+        raise ValueError("image too large")
+    return content
+
+
+def _read_bytes_from_url_limited(candidate: str, *, max_bytes: int) -> tuple[bytes, str] | None:
+    parsed = urlparse(candidate)
+    if parsed.scheme not in ("http", "https"):
+        return None
+
     with urlopen(candidate, timeout=30) as response:  # nosec B310
-        image_bytes = response.read()
+        image_bytes = _read_with_size_limit(response.read, max_bytes)
         info = getattr(response, "info", None)
         header_content_type = ""
         if callable(info):
@@ -158,36 +157,39 @@ def _read_bytes_from_url(candidate: str) -> tuple[bytes, str]:
         return image_bytes, mime_type
 
 
-def _read_bytes_from_path(candidate: str) -> tuple[bytes, str] | None:
+def _read_bytes_from_path_limited(candidate: str, *, max_bytes: int) -> tuple[bytes, str] | None:
+    parsed = urlparse(candidate)
+    if parsed.scheme in ("http", "https", "file"):
+        return None
+
     path = Path(candidate)
     if not path.is_file():
         return None
+    if path.stat().st_size > max_bytes:
+        return None
+
     image_bytes = path.read_bytes()
+    if len(image_bytes) > max_bytes:
+        return None
     mime_type = _guess_mime_type(str(path))
     return image_bytes, mime_type
 
 
-def _as_standard_data_uri(candidate: str) -> str:
+def _as_standard_data_uri_sync(candidate: str, *, max_bytes: int) -> str:
     if _is_data_image_uri(candidate):
         return candidate
 
-    parsed = urlparse(candidate)
-    if parsed.scheme in ("http", "https", "file"):
-        try:
-            image_bytes, mime_type = _read_bytes_from_url(candidate)
-        except Exception:
-            return ""
-        if not image_bytes:
-            return ""
+    url_result = _read_bytes_from_url_limited(candidate, max_bytes=max_bytes)
+    if url_result is not None:
+        image_bytes, mime_type = url_result
         return _to_data_uri(image_bytes, mime_type)
 
-    path_result = _read_bytes_from_path(candidate)
-    if path_result is None:
-        return ""
-    image_bytes, mime_type = path_result
-    if not image_bytes:
-        return ""
-    return _to_data_uri(image_bytes, mime_type)
+    path_result = _read_bytes_from_path_limited(candidate, max_bytes=max_bytes)
+    if path_result is not None:
+        image_bytes, mime_type = path_result
+        return _to_data_uri(image_bytes, mime_type)
+
+    return ""
 
 
 def choose_first_image_source(
@@ -208,8 +210,7 @@ def choose_first_image_source(
     return None
 
 
-def resolve_edit_image(event: Any, *, strength_keyword: str) -> ResolvedMessageImage | None:
-    _ = strength_keyword
+async def resolve_edit_image(event: Any) -> ResolvedMessageImage | None:
     source = choose_first_image_source(
         current_images=_extract_current_images(event),
         reply_images=_extract_reply_images(event),
@@ -218,8 +219,14 @@ def resolve_edit_image(event: Any, *, strength_keyword: str) -> ResolvedMessageI
     if source is None:
         return None
 
-    data_uri = _as_standard_data_uri(source.image_data_uri)
+    try:
+        data_uri = await asyncio.to_thread(
+            _as_standard_data_uri_sync,
+            source.image_data_uri,
+            max_bytes=MAX_IMAGE_BYTES,
+        )
+    except Exception:
+        return None
     if not data_uri:
         return None
-
     return ResolvedMessageImage(source=source.source, image_data_uri=data_uri)

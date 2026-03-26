@@ -16,7 +16,7 @@
     "selected_model_id": {
         "description": "固定模型",
         "type": "string",
-        "hint": "插件会根据当前服务地址和 API Key 动态拉取模型列表，并显示为下拉选项",
+        "hint": "填写 preset-* 形式的模型 ID，例如 preset-314",
         "default": "",
         "obvious_hint": true
     }

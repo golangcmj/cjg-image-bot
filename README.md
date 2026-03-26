@@ -45,9 +45,13 @@
 
 ### `selected_model_id`
 
-固定模型下拉项。
+固定模型 ID。
 
-插件会根据当前的 `openai_api_base` 和 `openai_api_key` 动态请求 `/v1/models`，并把返回结果写成下拉选项。选择后保存的值仍然是实际的 `preset-*` 模型 ID。
+直接填写实际的 `preset-*` 模型值，例如：
+
+```text
+preset-314
+```
 
 ## 使用方式
 

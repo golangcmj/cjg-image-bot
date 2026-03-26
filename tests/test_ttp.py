@@ -1,6 +1,9 @@
 from pathlib import Path
 import json
 import sys
+import asyncio
+import importlib.util
+import types
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -308,3 +311,216 @@ def test_save_image_bytes_writes_png_file(tmp_path):
     assert saved.parent == tmp_path
     assert saved.suffix == ".png"
     assert saved.read_bytes() == b"fake-png-bytes"
+
+
+def _load_main_module():
+    fake_astrbot = types.ModuleType("astrbot")
+    fake_api = types.ModuleType("astrbot.api")
+    fake_api_all = types.ModuleType("astrbot.api.all")
+    fake_api_event = types.ModuleType("astrbot.api.event")
+    fake_api_star = types.ModuleType("astrbot.api.star")
+    fake_core = types.ModuleType("astrbot.core")
+    fake_core_message = types.ModuleType("astrbot.core.message")
+    fake_core_components = types.ModuleType("astrbot.core.message.components")
+
+    class _DummyLogger:
+        @staticmethod
+        def warning(*args, **kwargs):
+            return None
+
+        @staticmethod
+        def error(*args, **kwargs):
+            return None
+
+    class _DummyImage:
+        @staticmethod
+        def fromFileSystem(path):
+            return f"image:{path}"
+
+    class _DummyReply:
+        def __init__(self, id=None):
+            self.id = id
+
+    class _DummyStar:
+        def __init__(self, context):
+            self.context = context
+
+    class _DummyContext:
+        pass
+
+    class _DummyAstrMessageEvent:
+        pass
+
+    def _dummy_register(*args, **kwargs):
+        def decorator(cls):
+            return cls
+
+        return decorator
+
+    class _DummyFilter:
+        @staticmethod
+        def command(_name):
+            def decorator(func):
+                return func
+
+            return decorator
+
+    fake_api.logger = _DummyLogger()
+    fake_api_all.Image = _DummyImage
+    fake_api_event.filter = _DummyFilter()
+    fake_api_event.AstrMessageEvent = _DummyAstrMessageEvent
+    fake_api_star.Context = _DummyContext
+    fake_api_star.Star = _DummyStar
+    fake_api_star.register = _dummy_register
+    fake_core_components.Reply = _DummyReply
+
+    sys.modules["astrbot"] = fake_astrbot
+    sys.modules["astrbot.api"] = fake_api
+    sys.modules["astrbot.api.all"] = fake_api_all
+    sys.modules["astrbot.api.event"] = fake_api_event
+    sys.modules["astrbot.api.star"] = fake_api_star
+    sys.modules["astrbot.core"] = fake_core
+    sys.modules["astrbot.core.message"] = fake_core_message
+    sys.modules["astrbot.core.message.components"] = fake_core_components
+
+    spec = importlib.util.spec_from_file_location(
+        "cjg_image_bot_main_for_test",
+        str(ROOT / "main.py"),
+    )
+    module = importlib.util.module_from_spec(spec)
+    assert spec is not None and spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
+class _DummyEvent:
+    def __init__(self, message_str: str, *, current_images=None, reply_images=None, mention_avatars=None):
+        self.message_str = message_str
+        self.message_obj = None
+        self.current_images = current_images or []
+        self.reply_images = reply_images or []
+        self.mention_avatars = mention_avatars or []
+
+    def plain_result(self, text):
+        return ("plain", text)
+
+    def chain_result(self, chain):
+        return ("chain", chain)
+
+
+def test_generate_image_sanitizes_control_fragments_before_submission(monkeypatch):
+    module = _load_main_module()
+    plugin = module.MyPlugin(
+        context=object(),
+        config={
+            "openai_api_base": "https://image.example",
+            "openai_api_key": "sk-test",
+            "selected_model_id": "preset-314",
+        },
+    )
+
+    async def _available():
+        return True
+
+    captured_prompt = {"value": None}
+
+    async def _fake_request_generation(base, key, model, prompt):
+        captured_prompt["value"] = prompt
+        return "b64_json", "ZmFrZS1pbWFnZS1ieXRlcw=="
+
+    async def _fake_fetch_image_bytes(_kind, _value):
+        return b"fake-image-bytes"
+
+    monkeypatch.setattr(plugin, "_selected_model_is_available", _available)
+    monkeypatch.setattr(module, "request_generation", _fake_request_generation)
+    monkeypatch.setattr(module, "fetch_image_bytes_from_result", _fake_fetch_image_bytes)
+    monkeypatch.setattr(module, "save_image_bytes", lambda *_args, **_kwargs: "fake.png")
+
+    raw = "/生图 data:image/png;base64,QUJD [[强度=0.3]] 漫画女孩"
+    event = _DummyEvent(raw)
+
+    asyncio.run(_collect_results(plugin.generate_image(event)))
+
+    assert captured_prompt["value"] == "  漫画女孩"
+
+
+def test_edit_image_requires_non_empty_text_after_control_stripping():
+    module = _load_main_module()
+    plugin = module.MyPlugin(
+        context=object(),
+        config={
+            "openai_api_base": "https://image.example",
+            "openai_api_key": "sk-test",
+            "selected_model_id": "preset-314",
+        },
+    )
+    event = _DummyEvent("/改图 [[强度=0.3]] data:image/png;base64,QUJD")
+
+    outputs = asyncio.run(_collect_results(plugin.edit_image(event)))
+
+    assert ("plain", "请输入改图描述") in outputs
+
+
+def test_edit_image_returns_no_image_message_when_not_found():
+    module = _load_main_module()
+    plugin = module.MyPlugin(
+        context=object(),
+        config={
+            "openai_api_base": "https://image.example",
+            "openai_api_key": "sk-test",
+            "selected_model_id": "preset-314",
+        },
+    )
+    event = _DummyEvent("/改图 请加一点暖色调")
+
+    outputs = asyncio.run(_collect_results(plugin.edit_image(event)))
+
+    assert ("plain", "未检测到图片") in outputs
+
+
+def test_edit_image_builds_prompt_with_resolved_image_and_strength(monkeypatch):
+    module = _load_main_module()
+    plugin = module.MyPlugin(
+        context=object(),
+        config={
+            "openai_api_base": "https://image.example",
+            "openai_api_key": "sk-test",
+            "selected_model_id": "preset-314",
+            "default_i2i_strength": 0.35,
+            "strength_keyword": "强度",
+        },
+    )
+
+    async def _available():
+        return True
+
+    captured_prompt = {"value": None}
+
+    async def _fake_request_generation(base, key, model, prompt):
+        captured_prompt["value"] = prompt
+        return "b64_json", "ZmFrZS1pbWFnZS1ieXRlcw=="
+
+    async def _fake_fetch_image_bytes(_kind, _value):
+        return b"fake-image-bytes"
+
+    monkeypatch.setattr(plugin, "_selected_model_is_available", _available)
+    monkeypatch.setattr(module, "request_generation", _fake_request_generation)
+    monkeypatch.setattr(module, "fetch_image_bytes_from_result", _fake_fetch_image_bytes)
+    monkeypatch.setattr(module, "save_image_bytes", lambda *_args, **_kwargs: "fake.png")
+
+    event = _DummyEvent(
+        "/改图 请改成赛博朋克 [[强度=0.3]]",
+        current_images=["data:image/png;base64,QUJD"],
+    )
+
+    outputs = asyncio.run(_collect_results(plugin.edit_image(event)))
+
+    assert captured_prompt["value"] == "请改成赛博朋克 \ndata:image/png;base64,QUJD\n[[strength=0.3]]"
+    assert any(item[0] == "chain" for item in outputs)
+
+
+async def _collect_results(async_generator):
+    result = []
+    async for item in async_generator:
+        result.append(item)
+    return result

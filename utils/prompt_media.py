@@ -17,10 +17,6 @@ class NormalizedEditPrompt:
     normalized_prompt: str
 
 
-def _collapse_whitespace(text: str) -> str:
-    return re.sub(r"\s+", " ", text).strip()
-
-
 def _is_strength_key(key: str, strength_keyword: str) -> bool:
     normalized = key.strip()
     return normalized.lower() == "strength" or normalized == strength_keyword.strip()
@@ -45,7 +41,7 @@ def _strip_strength_tags(raw_text: str, strength_keyword: str) -> str:
     def replacer(match: re.Match[str]) -> str:
         key = match.group(1).strip()
         if _is_strength_key(key, strength_keyword):
-            return " "
+            return ""
         return match.group(0)
 
     return TAG_PATTERN.sub(replacer, raw_text)
@@ -56,9 +52,9 @@ def _strip_all_known_strength_tags(raw_text: str) -> str:
 
 
 def sanitize_generate_prompt(raw_text: str) -> str:
-    without_images = DATA_URI_PATTERN.sub(" ", raw_text)
+    without_images = DATA_URI_PATTERN.sub("", raw_text)
     without_strength = _strip_all_known_strength_tags(without_images)
-    return _collapse_whitespace(without_strength)
+    return without_strength
 
 
 def normalize_edit_prompt_controls(
@@ -77,10 +73,10 @@ def normalize_edit_prompt_controls(
     if strength is None:
         strength = default_strength
 
-    without_images = DATA_URI_PATTERN.sub(" ", raw_text)
+    without_images = DATA_URI_PATTERN.sub("", raw_text)
     without_strength_tags = _strip_strength_tags(without_images, strength_keyword)
     without_strength_tags = _strip_strength_tags(without_strength_tags, "strength")
-    text = _collapse_whitespace(without_strength_tags)
+    text = without_strength_tags
 
     strength_tag = f"[[strength={strength:g}]]"
     parts = [part for part in [text, image_data_uri, strength_tag] if part]

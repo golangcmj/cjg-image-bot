@@ -12,19 +12,20 @@ from utils.prompt_media import (  # type: ignore
 )
 
 
-def test_sanitize_generate_prompt_strips_data_uri_and_strength_tags():
+def test_sanitize_generate_prompt_only_removes_control_fragments_without_global_whitespace_cleanup():
     raw = (
-        "开头 data:image/png;base64,QUJD [[强度=0.3]] 中间 "
-        "[[strength=0.9]] data:image/jpeg;base64,REVG 结尾"
+        "A\tdata:image/png;base64,QUJD\tB\n"
+        "[[强度=0.3]]  C  [[strength=0.9]]\n"
+        "data:image/jpeg;base64,REVG\tD"
     )
 
     cleaned = sanitize_generate_prompt(raw)
 
-    assert cleaned == "开头 中间 结尾"
+    assert cleaned == "A\t\tB\n  C  \n\tD"
 
 
-def test_normalize_edit_prompt_controls_keeps_text_when_data_uri_in_middle():
-    raw = "前缀 data:image/png;base64,QUJD 后缀 [[强度=0.3]]"
+def test_normalize_edit_prompt_controls_keeps_text_when_data_uri_in_middle_without_collapsing_whitespace():
+    raw = "prefix\tdata:image/png;base64,QUJD\t suffix\n[[强度=0.3]]\n"
 
     normalized = normalize_edit_prompt_controls(
         raw_text=raw,
@@ -32,7 +33,7 @@ def test_normalize_edit_prompt_controls_keeps_text_when_data_uri_in_middle():
         default_strength=0.35,
     )
 
-    assert normalized.text == "前缀 后缀"
+    assert normalized.text == "prefix\t\t suffix\n\n"
     assert normalized.image_data_uri == "data:image/png;base64,QUJD"
     assert normalized.strength == 0.3
     assert normalized.normalized_prompt.count("data:image/png;base64,QUJD") == 1
@@ -40,9 +41,9 @@ def test_normalize_edit_prompt_controls_keeps_text_when_data_uri_in_middle():
 
 
 def test_normalize_edit_prompt_controls_preserves_text_with_uri_at_beginning_middle_end():
-    begin_raw = "data:image/png;base64,QUJD 开头文本"
-    middle_raw = "开头文本 data:image/png;base64,QUJD 中间文本"
-    end_raw = "结尾文本 data:image/png;base64,QUJD"
+    begin_raw = "data:image/png;base64,QUJD begin\ttext"
+    middle_raw = "begin  data:image/png;base64,QUJD\tmiddle\ntext"
+    end_raw = "end\ttext data:image/png;base64,QUJD"
 
     begin = normalize_edit_prompt_controls(
         raw_text=begin_raw,
@@ -60,13 +61,13 @@ def test_normalize_edit_prompt_controls_preserves_text_with_uri_at_beginning_mid
         default_strength=0.35,
     )
 
-    assert begin.text == "开头文本"
-    assert middle.text == "开头文本 中间文本"
-    assert end.text == "结尾文本"
+    assert begin.text == " begin\ttext"
+    assert middle.text == "begin  \tmiddle\ntext"
+    assert end.text == "end\ttext "
 
 
 def test_normalize_edit_prompt_controls_normalizes_chinese_strength_keyword():
-    raw = "主体内容 [[强度=0.3]] data:image/png;base64,QUJD"
+    raw = "subject [[强度=0.3]] data:image/png;base64,QUJD"
 
     normalized = normalize_edit_prompt_controls(
         raw_text=raw,
@@ -81,7 +82,7 @@ def test_normalize_edit_prompt_controls_normalizes_chinese_strength_keyword():
 
 def test_normalize_edit_prompt_controls_keeps_first_valid_strength_and_discards_rest():
     raw = (
-        "主体 [[强度=2]] [[强度=0.4]] [[strength=0.7]] "
+        "subject [[强度=2]] [[强度=0.4]] [[strength=0.7]] "
         "data:image/png;base64,QUJD"
     )
 
@@ -98,7 +99,7 @@ def test_normalize_edit_prompt_controls_keeps_first_valid_strength_and_discards_
 
 
 def test_normalize_edit_prompt_controls_injects_default_strength_when_missing():
-    raw = "主体内容 data:image/png;base64,QUJD"
+    raw = "subject data:image/png;base64,QUJD"
 
     normalized = normalize_edit_prompt_controls(
         raw_text=raw,

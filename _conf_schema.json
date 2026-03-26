@@ -22,7 +22,7 @@
     },
     "model_directory": {
         "description": "模型目录（多行）",
-        "type": "string",
+        "type": "text",
         "hint": "每行格式：模型名称|模型ID。单独一行也有效；非法行会忽略，但合法行会保留。示例：动漫模型|preset-314",
         "default": "",
         "obvious_hint": true

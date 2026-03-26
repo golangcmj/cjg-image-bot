@@ -10,3 +10,10 @@ def test_conf_schema_uses_astrbot_supported_float_type_for_default_i2i_strength(
     assert '"default_i2i_strength"' in schema
     assert '"type": "float"' in schema
     assert '"type": "number"' not in schema
+
+
+def test_conf_schema_uses_multiline_text_type_for_model_directory():
+    schema = (ROOT / "_conf_schema.json").read_text(encoding="utf-8")
+
+    assert '"model_directory"' in schema
+    assert '"type": "text"' in schema

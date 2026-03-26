@@ -36,7 +36,7 @@
     },
     "default_i2i_strength": {
         "description": "默认图生图强度",
-        "type": "number",
+        "type": "float",
         "hint": "范围 0~1，越接近 0 越贴近原图；当未显式标注强度时使用该值。",
         "default": 0.35,
         "obvious_hint": true

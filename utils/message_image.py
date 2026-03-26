@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import base64
+import mimetypes
+from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
+from urllib.request import urlopen
 
 
 @dataclass
@@ -120,6 +125,71 @@ def _extract_mention_avatars(event: Any) -> list[str]:
     return avatars
 
 
+def _is_data_image_uri(candidate: str) -> bool:
+    return candidate.lower().startswith("data:image/")
+
+
+def _guess_mime_type(source: str, *, header_content_type: str = "") -> str:
+    content_type = (header_content_type or "").split(";", 1)[0].strip().lower()
+    if content_type.startswith("image/"):
+        return content_type
+
+    guessed, _ = mimetypes.guess_type(source)
+    if guessed and guessed.lower().startswith("image/"):
+        return guessed.lower()
+
+    return "image/png"
+
+
+def _to_data_uri(image_bytes: bytes, mime_type: str) -> str:
+    encoded = base64.b64encode(image_bytes).decode("ascii")
+    return f"data:{mime_type};base64,{encoded}"
+
+
+def _read_bytes_from_url(candidate: str) -> tuple[bytes, str]:
+    with urlopen(candidate, timeout=30) as response:  # nosec B310
+        image_bytes = response.read()
+        info = getattr(response, "info", None)
+        header_content_type = ""
+        if callable(info):
+            headers = info()
+            header_content_type = str(getattr(headers, "get_content_type", lambda: "")())
+        mime_type = _guess_mime_type(candidate, header_content_type=header_content_type)
+        return image_bytes, mime_type
+
+
+def _read_bytes_from_path(candidate: str) -> tuple[bytes, str] | None:
+    path = Path(candidate)
+    if not path.is_file():
+        return None
+    image_bytes = path.read_bytes()
+    mime_type = _guess_mime_type(str(path))
+    return image_bytes, mime_type
+
+
+def _as_standard_data_uri(candidate: str) -> str:
+    if _is_data_image_uri(candidate):
+        return candidate
+
+    parsed = urlparse(candidate)
+    if parsed.scheme in ("http", "https", "file"):
+        try:
+            image_bytes, mime_type = _read_bytes_from_url(candidate)
+        except Exception:
+            return ""
+        if not image_bytes:
+            return ""
+        return _to_data_uri(image_bytes, mime_type)
+
+    path_result = _read_bytes_from_path(candidate)
+    if path_result is None:
+        return ""
+    image_bytes, mime_type = path_result
+    if not image_bytes:
+        return ""
+    return _to_data_uri(image_bytes, mime_type)
+
+
 def choose_first_image_source(
     *,
     current_images: list[str] | None,
@@ -140,8 +210,16 @@ def choose_first_image_source(
 
 def resolve_edit_image(event: Any, *, strength_keyword: str) -> ResolvedMessageImage | None:
     _ = strength_keyword
-    return choose_first_image_source(
+    source = choose_first_image_source(
         current_images=_extract_current_images(event),
         reply_images=_extract_reply_images(event),
         mention_avatars=_extract_mention_avatars(event),
     )
+    if source is None:
+        return None
+
+    data_uri = _as_standard_data_uri(source.image_data_uri)
+    if not data_uri:
+        return None
+
+    return ResolvedMessageImage(source=source.source, image_data_uri=data_uri)

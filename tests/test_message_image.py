@@ -1,4 +1,5 @@
 from pathlib import Path
+import base64
 import sys
 from types import SimpleNamespace
 
@@ -73,3 +74,35 @@ def test_resolve_edit_image_returns_none_when_no_usable_images():
     resolved = resolve_edit_image(event, strength_keyword="强度")
 
     assert resolved is None
+
+
+def test_resolve_edit_image_converts_local_path_to_data_uri(tmp_path):
+    image_path = tmp_path / "sample.png"
+    image_bytes = b"\x89PNG\r\n\x1a\nfake-png-bytes"
+    image_path.write_bytes(image_bytes)
+
+    event = _event_with_sources(current_images=[str(image_path)])
+
+    resolved = resolve_edit_image(event, strength_keyword="强度")
+
+    assert resolved is not None
+    assert resolved.source == "current"
+    assert resolved.image_data_uri.startswith("data:image/png;base64,")
+    encoded = resolved.image_data_uri.split(",", 1)[1]
+    assert base64.b64decode(encoded) == image_bytes
+
+
+def test_resolve_edit_image_converts_file_url_to_data_uri(tmp_path):
+    image_path = tmp_path / "avatar.jpg"
+    image_bytes = b"\xff\xd8\xfffake-jpeg-bytes"
+    image_path.write_bytes(image_bytes)
+
+    event = _event_with_sources(mention_avatars=[image_path.as_uri()])
+
+    resolved = resolve_edit_image(event, strength_keyword="强度")
+
+    assert resolved is not None
+    assert resolved.source == "avatar"
+    assert resolved.image_data_uri.startswith("data:image/jpeg;base64,")
+    encoded = resolved.image_data_uri.split(",", 1)[1]
+    assert base64.b64decode(encoded) == image_bytes

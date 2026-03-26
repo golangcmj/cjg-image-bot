@@ -384,11 +384,13 @@ def _load_main_module():
     sys.modules["astrbot.core.message.components"] = fake_core_components
 
     spec = importlib.util.spec_from_file_location(
-        "cjg_image_bot_main_for_test",
+        "cjg_image_bot_testpkg",
         str(ROOT / "main.py"),
+        submodule_search_locations=[str(ROOT)],
     )
     module = importlib.util.module_from_spec(spec)
     assert spec is not None and spec.loader is not None
+    sys.modules["cjg_image_bot_testpkg"] = module
     spec.loader.exec_module(module)
     return module
 

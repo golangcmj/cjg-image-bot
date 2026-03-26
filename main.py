@@ -4,32 +4,21 @@ from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star, register
 from astrbot.core.message.components import Reply
 
-try:
-    from .utils.image_core import extract_command_prompt, normalize_selected_model_value
-    from .utils.image_http import (
-        fetch_image_bytes_from_result,
-        fetch_models,
-        request_generation,
-    )
-    from .utils.image_store import save_image_bytes
-    from .utils.message_image import resolve_edit_image
-    from .utils.prompt_media import normalize_edit_prompt_controls, sanitize_generate_prompt
-except ImportError:
-    from utils.image_core import extract_command_prompt, normalize_selected_model_value  # type: ignore
-    from utils.image_http import (  # type: ignore
-        fetch_image_bytes_from_result,
-        fetch_models,
-        request_generation,
-    )
-    from utils.image_store import save_image_bytes  # type: ignore
-    from utils.message_image import resolve_edit_image  # type: ignore
-    from utils.prompt_media import normalize_edit_prompt_controls, sanitize_generate_prompt  # type: ignore
+from .utils.image_core import extract_command_prompt, normalize_selected_model_value
+from .utils.image_http import (
+    fetch_image_bytes_from_result,
+    fetch_models,
+    request_generation,
+)
+from .utils.image_store import save_image_bytes
+from .utils.message_image import resolve_edit_image
+from .utils.prompt_media import normalize_edit_prompt_controls, sanitize_generate_prompt
 
 
 @register(
-    "\u953a\u3224\u53ad\u68e3\u55d7\u6553\u9354",
+    "蠢酒馆生图",
     "golangcmj",
-    "\u953a\u3224\u53ad\u68e3\u55d7\u6553\u9354",
+    "蠢酒馆生图",
     "3.0.0",
 )
 class MyPlugin(Star):

@@ -24,6 +24,17 @@ def test_sanitize_generate_prompt_only_removes_control_fragments_without_global_
     assert cleaned == "A\t\tB\n  C  \n\tD"
 
 
+def test_sanitize_generate_prompt_supports_configured_strength_keyword_with_backward_compatibility():
+    raw = (
+        "x [[力度=0.2]] y [[strength=0.7]] z [[强度=0.3]] "
+        "data:image/png;base64,QUJD end"
+    )
+
+    cleaned = sanitize_generate_prompt(raw, strength_keyword="力度")
+
+    assert cleaned == "x  y  z   end"
+
+
 def test_normalize_edit_prompt_controls_keeps_text_when_data_uri_in_middle_without_collapsing_whitespace():
     raw = "prefix\tdata:image/png;base64,QUJD\t suffix\n[[强度=0.3]]\n"
 

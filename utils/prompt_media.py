@@ -47,13 +47,19 @@ def _strip_strength_tags(raw_text: str, strength_keyword: str) -> str:
     return TAG_PATTERN.sub(replacer, raw_text)
 
 
-def _strip_all_known_strength_tags(raw_text: str) -> str:
-    return _strip_strength_tags(_strip_strength_tags(raw_text, "强度"), "strength")
+def _strip_strength_tags_by_keywords(raw_text: str, keywords: list[str]) -> str:
+    cleaned = raw_text
+    for keyword in keywords:
+        cleaned = _strip_strength_tags(cleaned, keyword)
+    return cleaned
 
 
-def sanitize_generate_prompt(raw_text: str) -> str:
+def sanitize_generate_prompt(raw_text: str, strength_keyword: str = "强度") -> str:
     without_images = DATA_URI_PATTERN.sub("", raw_text)
-    without_strength = _strip_all_known_strength_tags(without_images)
+    without_strength = _strip_strength_tags_by_keywords(
+        without_images,
+        [strength_keyword, "强度", "strength"],
+    )
     return without_strength
 
 

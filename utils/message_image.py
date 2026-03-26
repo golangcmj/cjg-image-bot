@@ -44,8 +44,10 @@ def _normalize_image_candidate(value: Any) -> str:
     return candidate
 
 
-def _iter_component_candidates(component: Any):
+def _iter_component_candidates(component: Any, *, allow_plain_string: bool):
     if isinstance(component, str):
+        if not allow_plain_string:
+            return
         yield component
         return
 
@@ -59,13 +61,13 @@ def _iter_component_candidates(component: Any):
         yield getattr(component, attr, None)
 
 
-def _extract_image_strings_from_components(components: Any) -> list[str]:
+def _extract_image_strings_from_components(components: Any, *, allow_plain_strings: bool) -> list[str]:
     if not components:
         return []
 
     results: list[str] = []
     for component in components:
-        for candidate in _iter_component_candidates(component):
+        for candidate in _iter_component_candidates(component, allow_plain_string=allow_plain_strings):
             normalized = _normalize_image_candidate(candidate)
             if normalized:
                 results.append(normalized)
@@ -73,17 +75,23 @@ def _extract_image_strings_from_components(components: Any) -> list[str]:
 
 
 def _extract_current_images(event: Any) -> list[str]:
-    direct = _extract_image_strings_from_components(getattr(event, "current_images", None))
+    direct = _extract_image_strings_from_components(
+        getattr(event, "current_images", None),
+        allow_plain_strings=True,
+    )
     if direct:
         return direct
 
     message_obj = getattr(event, "message_obj", None)
     message_components = getattr(message_obj, "message", None)
-    return _extract_image_strings_from_components(message_components)
+    return _extract_image_strings_from_components(message_components, allow_plain_strings=False)
 
 
 def _extract_reply_images(event: Any) -> list[str]:
-    direct = _extract_image_strings_from_components(getattr(event, "reply_images", None))
+    direct = _extract_image_strings_from_components(
+        getattr(event, "reply_images", None),
+        allow_plain_strings=True,
+    )
     if direct:
         return direct
 
@@ -91,14 +99,17 @@ def _extract_reply_images(event: Any) -> list[str]:
     for reply_attr in ("reply", "quote", "referenced_message", "reply_message"):
         reply_obj = getattr(message_obj, reply_attr, None)
         reply_components = getattr(reply_obj, "message", None)
-        extracted = _extract_image_strings_from_components(reply_components)
+        extracted = _extract_image_strings_from_components(reply_components, allow_plain_strings=False)
         if extracted:
             return extracted
     return []
 
 
 def _extract_mention_avatars(event: Any) -> list[str]:
-    direct = _extract_image_strings_from_components(getattr(event, "mention_avatars", None))
+    direct = _extract_image_strings_from_components(
+        getattr(event, "mention_avatars", None),
+        allow_plain_strings=True,
+    )
     if direct:
         return direct
 

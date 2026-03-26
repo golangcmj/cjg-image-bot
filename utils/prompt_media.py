@@ -7,6 +7,8 @@ DATA_URI_PATTERN = re.compile(
     re.IGNORECASE,
 )
 TAG_PATTERN = re.compile(r"\[\[\s*([^\]=]+)\s*=\s*([^\]]+)\s*\]\]")
+DEFAULT_STRENGTH_KEYWORD = "\u5f3a\u5ea6"
+STANDARD_STRENGTH_KEYWORD = "strength"
 
 
 @dataclass
@@ -17,9 +19,19 @@ class NormalizedEditPrompt:
     normalized_prompt: str
 
 
+def _strength_key_aliases(strength_keyword: str) -> set[str]:
+    aliases = {STANDARD_STRENGTH_KEYWORD.casefold(), DEFAULT_STRENGTH_KEYWORD.casefold()}
+    keyword = strength_keyword.strip()
+    if keyword:
+        aliases.add(keyword.casefold())
+    return aliases
+
+
 def _is_strength_key(key: str, strength_keyword: str) -> bool:
     normalized = key.strip()
-    return normalized.lower() == "strength" or normalized == strength_keyword.strip()
+    if not normalized:
+        return False
+    return normalized.casefold() in _strength_key_aliases(strength_keyword)
 
 
 def _extract_first_valid_strength(raw_text: str, strength_keyword: str) -> float | None:
@@ -47,19 +59,9 @@ def _strip_strength_tags(raw_text: str, strength_keyword: str) -> str:
     return TAG_PATTERN.sub(replacer, raw_text)
 
 
-def _strip_strength_tags_by_keywords(raw_text: str, keywords: list[str]) -> str:
-    cleaned = raw_text
-    for keyword in keywords:
-        cleaned = _strip_strength_tags(cleaned, keyword)
-    return cleaned
-
-
-def sanitize_generate_prompt(raw_text: str, strength_keyword: str = "强度") -> str:
+def sanitize_generate_prompt(raw_text: str, strength_keyword: str = DEFAULT_STRENGTH_KEYWORD) -> str:
     without_images = DATA_URI_PATTERN.sub("", raw_text)
-    without_strength = _strip_strength_tags_by_keywords(
-        without_images,
-        [strength_keyword, "强度", "strength"],
-    )
+    without_strength = _strip_strength_tags(without_images, strength_keyword)
     return without_strength
 
 
@@ -81,7 +83,6 @@ def normalize_edit_prompt_controls(
 
     without_images = DATA_URI_PATTERN.sub("", raw_text)
     without_strength_tags = _strip_strength_tags(without_images, strength_keyword)
-    without_strength_tags = _strip_strength_tags(without_strength_tags, "strength")
     text = without_strength_tags
 
     strength_tag = f"[[strength={strength:g}]]"

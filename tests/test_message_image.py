@@ -25,6 +25,26 @@ def _event_with_sources(*, current_images=None, reply_images=None, mention_avata
     )
 
 
+def test_resolve_edit_image_ignores_plain_text_components_in_message_chain():
+    event = SimpleNamespace(
+        current_images=[],
+        reply_images=[],
+        mention_avatars=[],
+        message_obj=SimpleNamespace(
+            message=[
+                "just plain text",
+                {"url": "data:image/png;base64,Q1VSUkVOVA=="},
+            ],
+        ),
+    )
+
+    resolved = asyncio.run(resolve_edit_image(event))
+
+    assert resolved is not None
+    assert resolved.source == "current"
+    assert resolved.image_data_uri == "data:image/png;base64,Q1VSUkVOVA=="
+
+
 def test_choose_first_image_source_priority_current_reply_avatar():
     source = choose_first_image_source(
         current_images=["data:image/png;base64,CURRENT", "data:image/png;base64,CURRENT2"],

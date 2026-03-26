@@ -482,6 +482,26 @@ def test_edit_image_requires_non_empty_text_after_control_stripping():
     assert ("plain", "请输入改图描述") in outputs
 
 
+def test_edit_image_rejects_empty_description_even_when_image_exists():
+    module = _load_main_module()
+    plugin = module.MyPlugin(
+        context=object(),
+        config={
+            "openai_api_base": "https://image.example",
+            "openai_api_key": "sk-test",
+            "selected_model_id": "preset-314",
+        },
+    )
+    event = _DummyEvent(
+        "",
+        current_images=["data:image/png;base64,QUJD"],
+    )
+
+    outputs = asyncio.run(_collect_results(plugin.edit_image(event, prompt="")))
+
+    assert outputs[0][0] == "plain"
+    assert outputs[0][1] == "\u8bf7\u8f93\u5165\u6539\u56fe\u63cf\u8ff0"
+
 def test_edit_image_returns_no_image_message_when_not_found():
     module = _load_main_module()
     plugin = module.MyPlugin(
@@ -534,7 +554,7 @@ def test_edit_image_builds_prompt_with_resolved_image_and_strength(monkeypatch):
         current_images=["data:image/png;base64,QUJD"],
     )
 
-    outputs = asyncio.run(_collect_results(plugin.edit_image(event)))
+    outputs = asyncio.run(_collect_results(plugin.edit_image(event, prompt="warm light")))
 
     prompt_value = captured_prompt["value"]
     assert prompt_value is not None
@@ -543,6 +563,48 @@ def test_edit_image_builds_prompt_with_resolved_image_and_strength(monkeypatch):
     assert "[[strength=0.3]]" in prompt_value
     assert any(item[0] == "chain" for item in outputs)
 
+
+def test_edit_image_uses_default_strength_when_no_explicit_tag(monkeypatch):
+    module = _load_main_module()
+    plugin = module.MyPlugin(
+        context=object(),
+        config={
+            "openai_api_base": "https://image.example",
+            "openai_api_key": "sk-test",
+            "selected_model_id": "preset-314",
+            "default_i2i_strength": 0.42,
+            "strength_keyword": "??",
+        },
+    )
+
+    async def _available(_model_id):
+        return True
+
+    captured_prompt = {"value": None}
+
+    async def _fake_request_generation(base, key, model, prompt):
+        captured_prompt["value"] = prompt
+        return "b64_json", "ZmFrZS1pbWFnZS1ieXRlcw=="
+
+    async def _fake_fetch_image_bytes(_kind, _value):
+        return b"fake-image-bytes"
+
+    monkeypatch.setattr(plugin, "_selected_model_is_available", _available)
+    monkeypatch.setattr(module, "request_generation", _fake_request_generation)
+    monkeypatch.setattr(module, "fetch_image_bytes_from_result", _fake_fetch_image_bytes)
+    monkeypatch.setattr(module, "save_image_bytes", lambda *_args, **_kwargs: "fake.png")
+
+    event = _DummyEvent(
+        "",
+        current_images=["data:image/png;base64,QUJD"],
+    )
+
+    outputs = asyncio.run(_collect_results(plugin.edit_image(event, prompt="warm light")))
+
+    prompt_value = captured_prompt["value"]
+    assert prompt_value is not None
+    assert "[[strength=0.42]]" in prompt_value
+    assert any(item[0] == "chain" for item in outputs)
 
 def test_model_commands_include_name_and_id_and_switch_supports_name_or_id():
     module = _load_main_module()

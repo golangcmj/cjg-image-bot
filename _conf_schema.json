@@ -1,6 +1,6 @@
 {
     "openai_api_base": {
-        "description": "蠢酒馆生图服务地址",
+        "description": "图生图服务地址",
         "type": "string",
         "hint": "支持填写 https://your-host 或 https://your-host/v1",
         "default": "",
@@ -16,8 +16,22 @@
     "selected_model_id": {
         "description": "固定模型",
         "type": "string",
-        "hint": "填写 preset-* 形式的模型 ID，例如 preset-314",
+        "hint": "填写 preset-* 格式的模型 ID，例如 preset-314",
         "default": "",
+        "obvious_hint": true
+    },
+    "default_i2i_strength": {
+        "description": "默认图生图强度",
+        "type": "number",
+        "hint": "范围 0~1，越接近 0 越贴近原图；当未显式标注强度时使用该值。",
+        "default": 0.35,
+        "obvious_hint": true
+    },
+    "strength_keyword": {
+        "description": "强度控制关键字",
+        "type": "string",
+        "hint": "示例：[[强度=0.3]]；插件会归一化为 [[strength=0.3]]",
+        "default": "强度",
         "obvious_hint": true
     }
 }

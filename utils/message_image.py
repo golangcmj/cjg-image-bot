@@ -3,14 +3,21 @@ from __future__ import annotations
 from dataclasses import dataclass
 import asyncio
 import base64
+import ipaddress
+import logging
 import mimetypes
 from pathlib import Path
+import socket
 from typing import Any
-from urllib.parse import urlparse
-from urllib.request import urlopen
+from urllib.error import HTTPError
+from urllib.parse import urljoin, urlparse
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
+_REDIRECT_STATUS_CODES = {301, 302, 303, 307, 308}
+_MAX_REDIRECTS = 3
+_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass
@@ -21,6 +28,11 @@ class ResolvedMessageImage:
     @property
     def image_uri(self) -> str:
         return self.image_data_uri
+
+
+class _NoRedirectHandler(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
 
 
 def _normalize_image_candidate(value: Any) -> str:
@@ -141,20 +153,108 @@ def _read_with_size_limit(reader, max_bytes: int) -> bytes:
     return content
 
 
-def _read_bytes_from_url_limited(candidate: str, *, max_bytes: int) -> tuple[bytes, str] | None:
-    parsed = urlparse(candidate)
+def _is_public_ip(ip_text: str) -> bool:
+    ip = ipaddress.ip_address(ip_text)
+    return not (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_reserved
+        or ip.is_multicast
+        or ip.is_unspecified
+    )
+
+
+def _is_safe_public_http_target(url: str) -> bool:
+    parsed = urlparse(url)
     if parsed.scheme not in ("http", "https"):
+        return False
+
+    hostname = parsed.hostname
+    if not hostname:
+        return False
+
+    try:
+        infos = socket.getaddrinfo(hostname, None, type=socket.SOCK_STREAM)
+    except Exception:
+        return False
+
+    addresses = {info[4][0] for info in infos if info and len(info) >= 5 and info[4]}
+    if not addresses:
+        return False
+    return all(_is_public_ip(addr) for addr in addresses)
+
+
+def _decode_data_uri_limited(candidate: str, *, max_bytes: int) -> tuple[bytes, str] | None:
+    try:
+        header, payload = candidate.split(",", 1)
+    except ValueError:
         return None
 
-    with urlopen(candidate, timeout=30) as response:  # nosec B310
-        image_bytes = _read_with_size_limit(response.read, max_bytes)
-        info = getattr(response, "info", None)
-        header_content_type = ""
-        if callable(info):
-            headers = info()
-            header_content_type = str(getattr(headers, "get_content_type", lambda: "")())
-        mime_type = _guess_mime_type(candidate, header_content_type=header_content_type)
-        return image_bytes, mime_type
+    lower_header = header.lower()
+    if not lower_header.startswith("data:image/") or ";base64" not in lower_header:
+        return None
+
+    normalized_payload = payload.strip()
+    estimated_size = (len(normalized_payload) * 3) // 4
+    if estimated_size > max_bytes:
+        return None
+
+    try:
+        image_bytes = base64.b64decode(normalized_payload, validate=True)
+    except Exception:
+        return None
+    if len(image_bytes) > max_bytes:
+        return None
+
+    mime_type = header[5:].split(";", 1)[0].strip().lower()
+    if not mime_type.startswith("image/"):
+        return None
+    return image_bytes, mime_type
+
+
+def _open_http_no_redirect(url: str, *, timeout: int):
+    opener = build_opener(_NoRedirectHandler())
+    request = Request(url, method="GET")
+    return opener.open(request, timeout=timeout)
+
+
+def _read_bytes_from_http_limited(candidate: str, *, max_bytes: int) -> tuple[bytes, str] | None:
+    if not _is_safe_public_http_target(candidate):
+        return None
+
+    current = candidate
+    for _ in range(_MAX_REDIRECTS + 1):
+        if not _is_safe_public_http_target(current):
+            return None
+        try:
+            with _open_http_no_redirect(current, timeout=30) as response:
+                final_url = str(getattr(response, "geturl", lambda: current)() or current)
+                if final_url != current and not _is_safe_public_http_target(final_url):
+                    return None
+
+                image_bytes = _read_with_size_limit(response.read, max_bytes)
+                info = getattr(response, "info", None)
+                header_content_type = ""
+                if callable(info):
+                    headers = info()
+                    header_content_type = str(getattr(headers, "get_content_type", lambda: "")())
+                mime_type = _guess_mime_type(final_url, header_content_type=header_content_type)
+                return image_bytes, mime_type
+        except HTTPError as exc:
+            if exc.code not in _REDIRECT_STATUS_CODES:
+                return None
+            location = str(exc.headers.get("Location", "")).strip()
+            if not location:
+                return None
+            next_url = urljoin(current, location)
+            if not _is_safe_public_http_target(next_url):
+                return None
+            current = next_url
+            continue
+        except Exception:
+            return None
+    return None
 
 
 def _read_bytes_from_path_limited(candidate: str, *, max_bytes: int) -> tuple[bytes, str] | None:
@@ -175,13 +275,26 @@ def _read_bytes_from_path_limited(candidate: str, *, max_bytes: int) -> tuple[by
     return image_bytes, mime_type
 
 
+def _candidate_kind(candidate: str) -> str:
+    if _is_data_image_uri(candidate):
+        return "data-uri"
+    parsed = urlparse(candidate)
+    if parsed.scheme:
+        return f"url:{parsed.scheme}"
+    return "path"
+
+
 def _as_standard_data_uri_sync(candidate: str, *, max_bytes: int) -> str:
     if _is_data_image_uri(candidate):
-        return candidate
+        data_uri_result = _decode_data_uri_limited(candidate, max_bytes=max_bytes)
+        if data_uri_result is None:
+            return ""
+        image_bytes, mime_type = data_uri_result
+        return _to_data_uri(image_bytes, mime_type)
 
-    url_result = _read_bytes_from_url_limited(candidate, max_bytes=max_bytes)
-    if url_result is not None:
-        image_bytes, mime_type = url_result
+    http_result = _read_bytes_from_http_limited(candidate, max_bytes=max_bytes)
+    if http_result is not None:
+        image_bytes, mime_type = http_result
         return _to_data_uri(image_bytes, mime_type)
 
     path_result = _read_bytes_from_path_limited(candidate, max_bytes=max_bytes)
@@ -210,23 +323,30 @@ def choose_first_image_source(
     return None
 
 
-async def resolve_edit_image(event: Any) -> ResolvedMessageImage | None:
-    source = choose_first_image_source(
-        current_images=_extract_current_images(event),
-        reply_images=_extract_reply_images(event),
-        mention_avatars=_extract_mention_avatars(event),
-    )
-    if source is None:
-        return None
+def _iter_priority_candidates(event: Any):
+    for source_name, values in (
+        ("current", _extract_current_images(event)),
+        ("reply", _extract_reply_images(event)),
+        ("avatar", _extract_mention_avatars(event)),
+    ):
+        for candidate in values:
+            normalized = _normalize_image_candidate(candidate)
+            if normalized:
+                yield source_name, normalized
 
-    try:
-        data_uri = await asyncio.to_thread(
-            _as_standard_data_uri_sync,
-            source.image_data_uri,
-            max_bytes=MAX_IMAGE_BYTES,
-        )
-    except Exception:
-        return None
-    if not data_uri:
-        return None
-    return ResolvedMessageImage(source=source.source, image_data_uri=data_uri)
+
+async def resolve_edit_image(event: Any) -> ResolvedMessageImage | None:
+    for source_name, candidate in _iter_priority_candidates(event):
+        try:
+            data_uri = await asyncio.to_thread(
+                _as_standard_data_uri_sync,
+                candidate,
+                max_bytes=MAX_IMAGE_BYTES,
+            )
+        except Exception as exc:
+            _LOGGER.debug("image conversion failed: source=%s kind=%s err=%s", source_name, _candidate_kind(candidate), exc)
+            continue
+        if data_uri:
+            return ResolvedMessageImage(source=source_name, image_data_uri=data_uri)
+        _LOGGER.debug("image conversion rejected: source=%s kind=%s", source_name, _candidate_kind(candidate))
+    return None

@@ -63,8 +63,8 @@ def test_choose_first_image_source_falls_back_to_reply_then_avatar():
 
 def test_resolve_edit_image_returns_first_available_image():
     event = _event_with_sources(
-        current_images=["data:image/png;base64,CURRENT"],
-        reply_images=["data:image/png;base64,REPLY"],
+        current_images=["data:image/png;base64,Q1VSUkVOVA=="],
+        reply_images=["data:image/png;base64,UkVQTFk="],
         mention_avatars=["https://avatar.example/a.png"],
     )
 
@@ -72,7 +72,7 @@ def test_resolve_edit_image_returns_first_available_image():
 
     assert resolved is not None
     assert resolved.source == "current"
-    assert resolved.image_data_uri == "data:image/png;base64,CURRENT"
+    assert resolved.image_data_uri == "data:image/png;base64,Q1VSUkVOVA=="
 
 
 def test_resolve_edit_image_returns_none_when_no_usable_images():
@@ -140,9 +140,95 @@ def test_resolve_edit_image_rejects_oversized_remote_image(monkeypatch):
         def info(self):
             return _Headers()
 
-    monkeypatch.setattr("utils.message_image.urlopen", lambda *_args, **_kwargs: _Response())
+    monkeypatch.setattr("utils.message_image._is_safe_public_http_target", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr("utils.message_image._open_http_no_redirect", lambda *_args, **_kwargs: _Response())
 
     event = _event_with_sources(current_images=["https://example.com/big.png"])
+
+    resolved = asyncio.run(resolve_edit_image(event))
+
+    assert resolved is None
+
+
+def test_resolve_edit_image_tries_next_current_candidate_when_first_unusable(tmp_path):
+    image_path = tmp_path / "ok.png"
+    image_bytes = b"\x89PNG\r\n\x1a\nok-bytes"
+    image_path.write_bytes(image_bytes)
+
+    event = _event_with_sources(
+        current_images=[str(tmp_path / "missing.png"), str(image_path)],
+        reply_images=["data:image/png;base64,REPLY"],
+        mention_avatars=[],
+    )
+
+    resolved = asyncio.run(resolve_edit_image(event))
+
+    assert resolved is not None
+    assert resolved.source == "current"
+    assert resolved.image_data_uri.startswith("data:image/png;base64,")
+    assert base64.b64decode(resolved.image_data_uri.split(",", 1)[1]) == image_bytes
+
+
+def test_resolve_edit_image_falls_through_to_reply_when_current_unusable():
+    event = _event_with_sources(
+        current_images=["C:\\definitely-not-exists\\missing.png"],
+        reply_images=["data:image/png;base64,UkVQTFk="],
+        mention_avatars=[],
+    )
+
+    resolved = asyncio.run(resolve_edit_image(event))
+
+    assert resolved is not None
+    assert resolved.source == "reply"
+    assert resolved.image_data_uri == "data:image/png;base64,UkVQTFk="
+
+
+def test_resolve_edit_image_rejects_oversized_data_uri():
+    raw = b"A" * (MAX_IMAGE_BYTES + 1)
+    oversized_data_uri = "data:image/png;base64," + base64.b64encode(raw).decode("ascii")
+    event = _event_with_sources(current_images=[oversized_data_uri])
+
+    resolved = asyncio.run(resolve_edit_image(event))
+
+    assert resolved is None
+
+
+def test_resolve_edit_image_rejects_private_target_even_if_url_looks_normal():
+    event = _event_with_sources(current_images=["http://127.0.0.1/internal.png"])
+
+    resolved = asyncio.run(resolve_edit_image(event))
+
+    assert resolved is None
+
+
+def test_resolve_edit_image_rejects_redirect_to_disallowed_scheme(monkeypatch):
+    class _Headers:
+        @staticmethod
+        def get_content_type():
+            return "image/png"
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self, size=-1):
+            return b"small-png"
+
+        def info(self):
+            return _Headers()
+
+        def geturl(self):
+            return "file:///etc/passwd"
+
+    def _safe_target(url: str) -> bool:
+        return not url.startswith("file://")
+
+    monkeypatch.setattr("utils.message_image._is_safe_public_http_target", _safe_target)
+    monkeypatch.setattr("utils.message_image._open_http_no_redirect", lambda *_args, **_kwargs: _Response())
+    event = _event_with_sources(current_images=["https://example.com/redirect.png"])
 
     resolved = asyncio.run(resolve_edit_image(event))
 

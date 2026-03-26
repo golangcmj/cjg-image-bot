@@ -150,23 +150,22 @@ def test_resolve_edit_image_rejects_oversized_remote_image(monkeypatch):
     assert resolved is None
 
 
-def test_resolve_edit_image_tries_next_current_candidate_when_first_unusable(tmp_path):
+def test_resolve_edit_image_does_not_try_second_current_candidate_when_first_unusable(tmp_path):
     image_path = tmp_path / "ok.png"
     image_bytes = b"\x89PNG\r\n\x1a\nok-bytes"
     image_path.write_bytes(image_bytes)
 
     event = _event_with_sources(
         current_images=[str(tmp_path / "missing.png"), str(image_path)],
-        reply_images=["data:image/png;base64,REPLY"],
+        reply_images=["data:image/png;base64,UkVQTFk="],
         mention_avatars=[],
     )
 
     resolved = asyncio.run(resolve_edit_image(event))
 
     assert resolved is not None
-    assert resolved.source == "current"
-    assert resolved.image_data_uri.startswith("data:image/png;base64,")
-    assert base64.b64decode(resolved.image_data_uri.split(",", 1)[1]) == image_bytes
+    assert resolved.source == "reply"
+    assert resolved.image_data_uri == "data:image/png;base64,UkVQTFk="
 
 
 def test_resolve_edit_image_falls_through_to_reply_when_current_unusable():
@@ -229,6 +228,14 @@ def test_resolve_edit_image_rejects_redirect_to_disallowed_scheme(monkeypatch):
     monkeypatch.setattr("utils.message_image._is_safe_public_http_target", _safe_target)
     monkeypatch.setattr("utils.message_image._open_http_no_redirect", lambda *_args, **_kwargs: _Response())
     event = _event_with_sources(current_images=["https://example.com/redirect.png"])
+
+    resolved = asyncio.run(resolve_edit_image(event))
+
+    assert resolved is None
+
+
+def test_resolve_edit_image_rejects_unc_network_share_path():
+    event = _event_with_sources(current_images=["\\\\server\\share\\image.png"])
 
     resolved = asyncio.run(resolve_edit_image(event))
 

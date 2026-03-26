@@ -261,6 +261,10 @@ def _read_bytes_from_path_limited(candidate: str, *, max_bytes: int) -> tuple[by
     parsed = urlparse(candidate)
     if parsed.scheme in ("http", "https", "file"):
         return None
+    if candidate.startswith("\\\\") or candidate.startswith("//"):
+        return None
+    if parsed.netloc:
+        return None
 
     path = Path(candidate)
     if not path.is_file():
@@ -323,16 +327,23 @@ def choose_first_image_source(
     return None
 
 
+def _first_normalized_or_empty(values: list[str]) -> str:
+    for candidate in values:
+        normalized = _normalize_image_candidate(candidate)
+        if normalized:
+            return normalized
+    return ""
+
+
 def _iter_priority_candidates(event: Any):
     for source_name, values in (
         ("current", _extract_current_images(event)),
         ("reply", _extract_reply_images(event)),
         ("avatar", _extract_mention_avatars(event)),
     ):
-        for candidate in values:
-            normalized = _normalize_image_candidate(candidate)
-            if normalized:
-                yield source_name, normalized
+        first_candidate = _first_normalized_or_empty(values)
+        if first_candidate:
+            yield source_name, first_candidate
 
 
 async def resolve_edit_image(event: Any) -> ResolvedMessageImage | None:
@@ -344,7 +355,12 @@ async def resolve_edit_image(event: Any) -> ResolvedMessageImage | None:
                 max_bytes=MAX_IMAGE_BYTES,
             )
         except Exception as exc:
-            _LOGGER.debug("image conversion failed: source=%s kind=%s err=%s", source_name, _candidate_kind(candidate), exc)
+            _LOGGER.debug(
+                "image conversion failed: source=%s kind=%s err_type=%s",
+                source_name,
+                _candidate_kind(candidate),
+                type(exc).__name__,
+            )
             continue
         if data_uri:
             return ResolvedMessageImage(source=source_name, image_data_uri=data_uri)

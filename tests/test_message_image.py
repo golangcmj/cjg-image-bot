@@ -202,6 +202,44 @@ def test_resolve_edit_image_falls_through_to_reply_when_current_unusable():
     assert resolved.image_data_uri == "data:image/png;base64,UkVQTFk="
 
 
+def test_resolve_edit_image_reads_reply_chain_from_message_components():
+    reply_component = SimpleNamespace(
+        type=SimpleNamespace(name="Reply"),
+        chain=[SimpleNamespace(data={"url": "data:image/png;base64,UkVQTFk="})],
+    )
+    event = SimpleNamespace(
+        current_images=[],
+        reply_images=[],
+        mention_avatars=[],
+        message_obj=SimpleNamespace(message=[reply_component]),
+    )
+
+    resolved = asyncio.run(resolve_edit_image(event))
+
+    assert resolved is not None
+    assert resolved.source == "reply"
+    assert resolved.image_data_uri == "data:image/png;base64,UkVQTFk="
+
+
+def test_resolve_edit_image_builds_avatar_from_at_component_when_mentions_missing():
+    at_component = SimpleNamespace(
+        type=SimpleNamespace(name="At"),
+        data={"qq": "123456"},
+    )
+    event = SimpleNamespace(
+        current_images=[],
+        reply_images=[],
+        mention_avatars=[],
+        message_obj=SimpleNamespace(message=[at_component], mentions=[]),
+    )
+
+    resolved = asyncio.run(resolve_edit_image(event))
+
+    assert resolved is not None
+    assert resolved.source == "avatar"
+    assert resolved.image_data_uri.startswith("data:image/")
+
+
 def test_resolve_edit_image_rejects_oversized_data_uri():
     raw = b"A" * (MAX_IMAGE_BYTES + 1)
     oversized_data_uri = "data:image/png;base64," + base64.b64encode(raw).decode("ascii")

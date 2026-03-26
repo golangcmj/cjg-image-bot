@@ -44,6 +44,22 @@ def _normalize_image_candidate(value: Any) -> str:
     return candidate
 
 
+def _normalize_component_type(value: Any) -> str:
+    if value is None:
+        return ""
+    for attr in ("value", "name"):
+        attr_value = getattr(value, attr, None)
+        if isinstance(attr_value, str) and attr_value.strip():
+            return attr_value.strip().split(".")[-1].lower()
+    return str(value).strip().split(".")[-1].lower()
+
+
+def _component_type_name(component: Any) -> str:
+    if isinstance(component, dict):
+        return _normalize_component_type(component.get("type"))
+    return _normalize_component_type(getattr(component, "type", None))
+
+
 def _iter_component_candidates(component: Any, *, allow_plain_string: bool):
     if isinstance(component, str):
         if not allow_plain_string:
@@ -55,10 +71,19 @@ def _iter_component_candidates(component: Any, *, allow_plain_string: bool):
         for key in ("data_uri", "image_data_uri", "image", "url", "src", "file", "path"):
             if key in component:
                 yield component.get(key)
+        payload = component.get("data")
+        if isinstance(payload, dict):
+            for key in ("data_uri", "image_data_uri", "image", "url", "src", "file", "path"):
+                if key in payload:
+                    yield payload.get(key)
         return
 
     for attr in ("data_uri", "image_data_uri", "image", "url", "src", "file", "path"):
         yield getattr(component, attr, None)
+    payload = getattr(component, "data", None)
+    if isinstance(payload, dict):
+        for key in ("data_uri", "image_data_uri", "image", "url", "src", "file", "path"):
+            yield payload.get(key)
 
 
 def _extract_image_strings_from_components(components: Any, *, allow_plain_strings: bool) -> list[str]:
@@ -98,11 +123,64 @@ def _extract_reply_images(event: Any) -> list[str]:
     message_obj = getattr(event, "message_obj", None)
     for reply_attr in ("reply", "quote", "referenced_message", "reply_message"):
         reply_obj = getattr(message_obj, reply_attr, None)
-        reply_components = getattr(reply_obj, "message", None)
+        reply_components = getattr(reply_obj, "message", None) or getattr(reply_obj, "chain", None)
+        extracted = _extract_image_strings_from_components(reply_components, allow_plain_strings=False)
+        if extracted:
+            return extracted
+
+    message_components = getattr(message_obj, "message", None) or []
+    for component in message_components:
+        component_type = _component_type_name(component)
+        if component_type != "reply":
+            if not isinstance(component, dict) or _normalize_component_type(component.get("type")) != "reply":
+                continue
+        reply_components = getattr(component, "chain", None)
+        if reply_components is None and isinstance(component, dict):
+            reply_components = component.get("chain")
+            if reply_components is None:
+                payload = component.get("data")
+                if isinstance(payload, dict):
+                    reply_components = payload.get("chain")
         extracted = _extract_image_strings_from_components(reply_components, allow_plain_strings=False)
         if extracted:
             return extracted
     return []
+
+
+def _extract_at_targets_from_message(message_obj: Any) -> list[str]:
+    message_components = getattr(message_obj, "message", None) or []
+    targets: list[str] = []
+    for component in message_components:
+        component_type = _component_type_name(component)
+        if isinstance(component, dict):
+            component_type = _normalize_component_type(component.get("type", component_type))
+            payload = component.get("data")
+            if component_type == "at":
+                target = component.get("qq") or component.get("target")
+                if target is None and isinstance(payload, dict):
+                    target = payload.get("qq") or payload.get("target")
+                normalized = str(target or "").strip()
+                if normalized and normalized != "all":
+                    targets.append(normalized)
+            continue
+
+        if component_type != "at":
+            continue
+        target = getattr(component, "qq", None) or getattr(component, "target", None)
+        payload = getattr(component, "data", None)
+        if target is None and isinstance(payload, dict):
+            target = payload.get("qq") or payload.get("target")
+        normalized = str(target or "").strip()
+        if normalized and normalized != "all":
+            targets.append(normalized)
+    return targets
+
+
+def _build_qq_avatar_url(user_id: str) -> str:
+    normalized = str(user_id or "").strip()
+    if not normalized or not normalized.isdigit():
+        return ""
+    return f"https://q4.qlogo.cn/headimg_dl?dst_uin={normalized}&spec=640"
 
 
 def _extract_mention_avatars(event: Any) -> list[str]:
@@ -116,7 +194,8 @@ def _extract_mention_avatars(event: Any) -> list[str]:
     message_obj = getattr(event, "message_obj", None)
     mentions = getattr(message_obj, "mentions", None)
     if not mentions:
-        return []
+        mentions = _extract_at_targets_from_message(message_obj)
+        return [avatar for avatar in (_build_qq_avatar_url(mention) for mention in mentions) if avatar]
 
     avatars: list[str] = []
     for mention in mentions:
@@ -126,6 +205,11 @@ def _extract_mention_avatars(event: Any) -> list[str]:
                 if normalized:
                     avatars.append(normalized)
                     break
+            else:
+                target = mention.get("qq") or mention.get("target")
+                fallback = _build_qq_avatar_url(str(target or ""))
+                if fallback:
+                    avatars.append(fallback)
             continue
 
         for attr in ("avatar", "avatar_url", "user_avatar", "face"):
@@ -133,6 +217,14 @@ def _extract_mention_avatars(event: Any) -> list[str]:
             if normalized:
                 avatars.append(normalized)
                 break
+        else:
+            target = getattr(mention, "qq", None) or getattr(mention, "target", None)
+            payload = getattr(mention, "data", None)
+            if target is None and isinstance(payload, dict):
+                target = payload.get("qq") or payload.get("target")
+            fallback = _build_qq_avatar_url(str(target or ""))
+            if fallback:
+                avatars.append(fallback)
     return avatars
 
 

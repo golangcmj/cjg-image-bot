@@ -124,4 +124,4 @@ class MyPlugin(Star):
             yield event.chain_result(chain)
         except Exception as exc:
             logger.error("生图失败: %s", exc)
-            yield event.plain_result("图片生成失败")
+            yield event.plain_result(f"图片生成失败\n{exc}")
